@@ -1,0 +1,79 @@
+# 7Gather - Spatial Collaboration Platform
+# Deploy local com Docker Compose
+# Usage: docker compose up
+# Configuração: copie .env.example para .env e preencha os valores
+
+services:
+  nginx:
+    image: jc21/nginx-proxy-manager:latest
+    container_name: 7gather-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+      - "81:81"
+    volumes:
+      - nginx_data:/data
+      - letsencrypt:/etc/letsencrypt
+    restart: unless-stopped
+    networks:
+      - 7gather-internal
+    depends_on:
+      colyseus:
+        condition: service_healthy
+
+  colyseus:
+    build:
+      context: .
+      dockerfile: docker/server/Dockerfile
+    container_name: 7gather-colyseus
+    ports:
+      - "2567:2567"
+    environment:
+      - LIVEKIT_URL=${LIVEKIT_URL:-ws://livekit:7880}
+      - LIVEKIT_API_KEY=${LIVEKIT_API_KEY:-devkey}
+      - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET:-secret}
+    depends_on:
+      - livekit
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:2567/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    networks:
+      - 7gather-internal
+
+  livekit:
+    image: livekit/livekit-server:latest
+    container_name: 7gather-livekit
+    ports:
+      - "7880:7880"
+      - "7881:7881"
+      - "7882-7932:7882-7932/udp"
+    volumes:
+      - ./config/livekit.yaml:/etc/livekit.yaml:ro
+    command: ["--config", "/etc/livekit.yaml", "--keys", "${LIVEKIT_API_KEY:-devkey7gather}: ${LIVEKIT_API_SECRET:-this-is-a-dev-secret-at-least-32chars}"]
+    restart: unless-stopped
+    networks:
+      - 7gather-internal
+
+  client:
+    build:
+      context: .
+      dockerfile: docker/client/Dockerfile
+    container_name: 7gather-client
+    depends_on:
+      colyseus:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - 7gather-internal
+
+networks:
+  7gather-internal:
+    driver: bridge
+
+volumes:
+  nginx_data:
+  letsencrypt:

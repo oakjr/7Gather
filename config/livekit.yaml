@@ -1,0 +1,30 @@
+# LiveKit Server Configuration
+# Ref: https://docs.livekit.io/realtime/self-hosting/deployment/
+# This file is mounted into the LiveKit container at /etc/livekit.yaml
+
+port: 7880
+
+rtc:
+  port_range_start: 7882
+  port_range_end: 7932
+  use_external_ip: false
+  tcp_port: 7881
+  # Force using localhost for local development
+  node_ip: 127.0.0.1
+
+turn:
+  enabled: false
+
+room:
+  max_participants: 50
+  empty_timeout: 300
+
+keys:
+  # API key/secret pairs are configured via environment variables:
+  #   LIVEKIT_API_KEY and LIVEKIT_API_SECRET
+  # When running via docker-compose, these are injected automatically.
+  # Example: devkey: secret
+  # In production, use strong random values.
+
+logging:
+  level: info

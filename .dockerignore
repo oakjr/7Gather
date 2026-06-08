@@ -1,0 +1,15 @@
+node_modules
+dist
+.git
+.gitignore
+.env
+.env.*
+*.md
+.vscode
+.kiro
+*.log
+coverage
+.nyc_output
+
+# Exclude Dockerfiles from context but keep config files
+docker/**/Dockerfile
