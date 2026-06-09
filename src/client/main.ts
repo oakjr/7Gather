@@ -158,6 +158,13 @@ class App {
     gameContainer.style.left = '0';
     document.body.appendChild(gameContainer);
 
+    // Click on game area blurs any focused input so keyboard returns to game
+    gameContainer.addEventListener('pointerdown', () => {
+      if (document.activeElement && document.activeElement instanceof HTMLElement) {
+        document.activeElement.blur();
+      }
+    });
+
     this.game = new Phaser.Game({
       type: Phaser.AUTO,
       parent: 'game-container',
@@ -389,6 +396,7 @@ const GameOverlay: React.FC<GameOverlayProps> = ({
   const [isMusicMuted, setIsMusicMuted] = React.useState(false);
   const [isMusicPaused, setIsMusicPaused] = React.useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = React.useState(false);
+  const [allSectionsState, setAllSectionsState] = React.useState<boolean | null>(false);
   const [currentZoneId, setCurrentZoneId] = React.useState<string | null>(null);
   const [homeRoom, setHomeRoom] = React.useState<HomeRoomData | null>(getMyHomeRoom());
 
@@ -466,19 +474,52 @@ const GameOverlay: React.FC<GameOverlayProps> = ({
       React.createElement('div', { className: 'sidebar-logo' },
         React.createElement('img', { src: '/logo.png', alt: '7Gather', className: 'sidebar-logo-img' })
       ),
-      // Settings section
-      React.createElement(CollapsibleSection, { title: '⚙️ Opções', defaultOpen: true },
-        React.createElement(SettingsMenu, {
-          currentName: localStorage.getItem('display_name') || 'User',
-          currentAvatarId: Number(localStorage.getItem('avatar_id')) || 1,
-        })
-      ),
+      // Collapse All / Expand All button
+      React.createElement('button', {
+        className: 'sidebar-collapse-all-btn',
+        onClick: () => {
+          setAllSectionsState(prev => prev === false ? true : false);
+        },
+      }, allSectionsState === false ? '💥 Expandir Tudo' : '🕳️ Colapsar Tudo'),
       // Status section
-      React.createElement(CollapsibleSection, { title: '🟢 Status', defaultOpen: true },
+      React.createElement(CollapsibleSection, { title: '🟢 Status', defaultOpen: false, forceState: allSectionsState },
         React.createElement(StatusSelector, { initialStatus: 'available' })
       ),
+      // Participants section
+      React.createElement(CollapsibleSection, { title: '👥 Participantes', defaultOpen: false, forceState: allSectionsState },
+        React.createElement(ParticipantList, {
+          participants: [{
+            sessionId: 'local',
+            displayName: localStorage.getItem('display_name') || 'Eu',
+            avatarId: Number(localStorage.getItem('avatar_id')) || 1,
+            currentZone: '',
+          }],
+          onLocate: handleLocate,
+          onFollow: handleFollow,
+        })
+      ),
+      // Music player section
+      React.createElement(CollapsibleSection, { title: '🎵 Música', defaultOpen: false, forceState: allSectionsState },
+        React.createElement(MusicPlayer, {
+          currentTrack: musicTrack,
+          volume: musicVolume,
+          isMusicMuted,
+          onVolumeChange: handleVolumeChange,
+          onPlay: handlePlay,
+          onStop: handleStop,
+          onToggleMusicMute: handleToggleMusicMute,
+          isPaused: isMusicPaused,
+          onTogglePause: () => {
+            const paused = livekitClient.toggleMusicPause();
+            setIsMusicPaused(paused);
+          },
+          currentTime: musicProgress.currentTime,
+          duration: musicProgress.duration,
+          onSeek: (time: number) => livekitClient.seekMusic(time),
+        })
+      ),
       // Home Room section
-      React.createElement(CollapsibleSection, { title: '🏠 Minha Sala', defaultOpen: true },
+      React.createElement(CollapsibleSection, { title: '🏠 Minha Sala', defaultOpen: false, forceState: allSectionsState },
         homeRoom
           ? React.createElement('div', { className: 'home-room-info' },
               React.createElement('span', { className: 'home-room-name' }, `📍 ${homeRoom.zoneId}`),
@@ -512,37 +553,11 @@ const GameOverlay: React.FC<GameOverlayProps> = ({
                   )
             )
       ),
-      // Participants section
-      React.createElement(CollapsibleSection, { title: '👥 Participantes', defaultOpen: true },
-        React.createElement(ParticipantList, {
-          participants: [{
-            sessionId: 'local',
-            displayName: localStorage.getItem('display_name') || 'Eu',
-            avatarId: Number(localStorage.getItem('avatar_id')) || 1,
-            currentZone: '',
-          }],
-          onLocate: handleLocate,
-          onFollow: handleFollow,
-        })
-      ),
-      // Music player section
-      React.createElement(CollapsibleSection, { title: '🎵 Música', defaultOpen: true },
-        React.createElement(MusicPlayer, {
-          currentTrack: musicTrack,
-          volume: musicVolume,
-          isMusicMuted,
-          onVolumeChange: handleVolumeChange,
-          onPlay: handlePlay,
-          onStop: handleStop,
-          onToggleMusicMute: handleToggleMusicMute,
-          isPaused: isMusicPaused,
-          onTogglePause: () => {
-            const paused = livekitClient.toggleMusicPause();
-            setIsMusicPaused(paused);
-          },
-          currentTime: musicProgress.currentTime,
-          duration: musicProgress.duration,
-          onSeek: (time: number) => livekitClient.seekMusic(time),
+      // Settings section
+      React.createElement(CollapsibleSection, { title: '⚙️ Opções', defaultOpen: false, forceState: allSectionsState },
+        React.createElement(SettingsMenu, {
+          currentName: localStorage.getItem('display_name') || 'User',
+          currentAvatarId: Number(localStorage.getItem('avatar_id')) || 1,
         })
       )
     ),

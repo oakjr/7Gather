@@ -103,6 +103,6 @@ export function getSpawnPosition(): { tileX: number; tileY: number } {
   if (home) {
     return { tileX: home.spawnTileX, tileY: home.spawnTileY };
   }
-  // Default center of map
-  return { tileX: 27, tileY: 15 };
+  // Default center of map (50x40)
+  return { tileX: 25, tileY: 12 };
 }

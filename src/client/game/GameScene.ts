@@ -230,9 +230,9 @@ export class GameScene extends Phaser.Scene {
 
     // Add logo to meeting room floor (centered, 50% opacity)
     if (this.textures.exists('logo')) {
-      // Meeting room interior: x=21-32, y=20-27 (from generate-map.js: bigIx=21, bigIy=20, bigW=12, bigH=8)
-      const logoX = (21 + 6) * TILE_SIZE; // center of 12-wide room
-      const logoY = (20 + 4) * TILE_SIZE; // center of 8-tall room
+      // Meeting room interior: bigIx=19, bigIy=17, bigW=12, bigH=8
+      const logoX = (19 + 6) * TILE_SIZE;
+      const logoY = (17 + 4) * TILE_SIZE;
       const logo = this.add.image(logoX, logoY, 'logo');
       logo.setAlpha(0.5);
       logo.setDepth(2); // Above ground, below avatars
@@ -553,6 +553,12 @@ export class GameScene extends Phaser.Scene {
    * Supports both arrow keys and WASD. Priority: up > down > left > right.
    */
   private getInputDirection(): Direction | null {
+    // Don't capture keyboard input when a text field is focused
+    const activeEl = document.activeElement;
+    if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || (activeEl as HTMLElement).isContentEditable)) {
+      return null;
+    }
+
     const up = this.cursors?.up?.isDown || this.wasdKeys?.W?.isDown;
     const down = this.cursors?.down?.isDown || this.wasdKeys?.S?.isDown;
     const left = this.cursors?.left?.isDown || this.wasdKeys?.A?.isDown;

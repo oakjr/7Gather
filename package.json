@@ -1,6 +1,6 @@
 {
   "name": "7gather",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Spatial collaboration platform - virtual 2D office",
   "private": true,
   "scripts": {

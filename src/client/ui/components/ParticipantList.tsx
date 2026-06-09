@@ -83,7 +83,7 @@ export const ParticipantList: React.FC<ParticipantListProps> = ({
               aria-label={`Avatar: ${getAvatarCategory(participant.avatarId)}`}
               aria-hidden="false"
             >
-              {getAvatarEmoji(participant.avatarId)}
+              <img src={`/sprites/avatar_${participant.avatarId}.png`} alt="" style={{ width: '20px', height: '20px', imageRendering: 'pixelated' }} />
             </span>
 
             <span className="participant-name">{participant.displayName}</span>

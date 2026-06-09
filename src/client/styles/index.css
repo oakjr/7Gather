@@ -1269,9 +1269,9 @@ input:focus-visible {
 }
 
 .section-arrow {
-  font-size: 0.7rem;
+  font-size: 0.8rem;
   transition: transform 0.2s ease;
-  color: var(--color-text-dim);
+  display: inline-block;
 }
 
 .section-arrow.open {
@@ -1280,4 +1280,27 @@ input:focus-visible {
 
 .sidebar-section-content {
   padding-top: 6px;
+}
+
+
+/* ============================================================================
+   Sidebar Collapse All Button
+   ============================================================================ */
+
+.sidebar-collapse-all-btn {
+  width: 100%;
+  padding: 6px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-dim);
+  font-size: 0.7rem;
+  cursor: pointer;
+  transition: var(--transition);
+  margin-bottom: 8px;
+}
+
+.sidebar-collapse-all-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--color-text-muted);
 }
