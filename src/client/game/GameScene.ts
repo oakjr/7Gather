@@ -1,9 +1,11 @@
 import Phaser from 'phaser';
 import { Direction } from '../../shared/types';
-import { TILE_SIZE } from '../../shared/constants';
+import { TILE_SIZE, FLOOR_COLORS } from '../../shared/constants';
 import { TiledMapManager, PrivateZone } from './TiledMapManager';
 import { PlayerAvatar, RemoteAvatar } from './PlayerAvatar';
 import { FollowSystem } from './FollowSystem';
+import { DoorAnimationSystem } from './DoorAnimationSystem';
+import { SpaceBackground } from './SpaceBackground';
 import { getSpawnPosition, getMyHomeRoom } from '../ui/homeRoom';
 import { emitZoneChange } from '../ui/zoneEvents';
 import { setAvatarPosition } from '../ui/avatarPosition';
@@ -38,7 +40,7 @@ export const GameSceneEvents = {
 /**
  * Main game scene that handles:
  * - Map loading via TiledMapManager
- * - Local avatar input (arrows + WASD) and movement
+ * - Local avatar input (arrow keys) and movement
  * - Camera following the local player
  * - Remote avatar management (add/update/remove)
  * - Private zone enter/leave detection with event emission
@@ -49,14 +51,10 @@ export class GameScene extends Phaser.Scene {
   private mapManager!: TiledMapManager;
   private config!: GameSceneConfig;
   private followSystem!: FollowSystem;
+  private doorAnimationSystem!: DoorAnimationSystem;
+  private spaceBackground!: SpaceBackground;
 
   private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
-  private wasdKeys!: {
-    W: Phaser.Input.Keyboard.Key;
-    A: Phaser.Input.Keyboard.Key;
-    S: Phaser.Input.Keyboard.Key;
-    D: Phaser.Input.Keyboard.Key;
-  };
   private escapeKey!: Phaser.Input.Keyboard.Key;
   private shiftKey!: Phaser.Input.Keyboard.Key;
 
@@ -65,6 +63,9 @@ export class GameScene extends Phaser.Scene {
   private lastTileY: number = -1;
   private navigationTarget: { x: number; y: number } | null = null;
   private navigationPath: { x: number; y: number }[] = [];
+
+  /** Lock indicator graphics keyed by zoneId */
+  private lockIndicators: Map<string, Phaser.GameObjects.Graphics[]> = new Map();
 
   constructor() {
     super({ key: 'GameScene' });
@@ -105,6 +106,20 @@ export class GameScene extends Phaser.Scene {
     // Load the map using the TiledMapManager
     const mapConfig = this.mapManager.loadMap('map', tilesetKey, tilesetName);
 
+    // Determine map dimensions for background
+    const mapWidth = mapConfig.json.width * TILE_SIZE;
+    const mapHeight = mapConfig.json.height * TILE_SIZE;
+
+    // Create SpaceBackground at depth 0 (below all tile layers)
+    this.spaceBackground = new SpaceBackground(this, mapWidth, mapHeight);
+    this.spaceBackground.create();
+
+    // Create DoorAnimationSystem after map loading
+    const objectsTileLayer = this.mapManager.getObjectsTileLayer();
+    if (objectsTileLayer) {
+      this.doorAnimationSystem = new DoorAnimationSystem(this.mapManager, objectsTileLayer);
+    }
+
     // Determine starting position (use home room if set, else config/default)
     const spawn = getSpawnPosition();
     const startTileX = this.config.startX ?? spawn.tileX;
@@ -128,10 +143,7 @@ export class GameScene extends Phaser.Scene {
     this.cameras.main.startFollow(this.avatar.getSprite(), true, 0.1, 0.1);
     this.cameras.main.setZoom(2);
 
-    // Set camera bounds to the map size
-    const mapWidth = mapConfig.json.width * TILE_SIZE;
-    const mapHeight = mapConfig.json.height * TILE_SIZE;
-    this.cameras.main.setBounds(0, 0, mapWidth, mapHeight);
+    // No camera bounds constraint — allows viewing space background beyond map edges
 
     // Enable mouse wheel zoom (min 0.5x, max 4x)
     this.input.on('wheel', (_pointer: any, _gameObjects: any, _deltaX: number, deltaY: number) => {
@@ -268,6 +280,20 @@ export class GameScene extends Phaser.Scene {
    * Main update loop: process input, update positions, detect zone transitions.
    */
   update(_time: number, delta: number): void {
+    // Update space background animations
+    this.spaceBackground?.update(_time, delta);
+
+    // Update door animation system with all avatar positions
+    if (this.doorAnimationSystem) {
+      const remotePositions = new Map<string, { tileX: number; tileY: number }>();
+      for (const [sessionId, remoteAvatar] of this.remotePlayers) {
+        const tileX = Math.floor(remoteAvatar.x / TILE_SIZE);
+        const tileY = Math.floor(remoteAvatar.y / TILE_SIZE);
+        remotePositions.set(sessionId, { tileX, tileY });
+      }
+      this.doorAnimationSystem.update(this.avatar.tileX, this.avatar.tileY, remotePositions);
+    }
+
     // Check for Escape key to hide locate line
     if (this.escapeKey && this.escapeKey.isDown) {
       this.followSystem.handleEscape();
@@ -525,10 +551,190 @@ export class GameScene extends Phaser.Scene {
     return this.followSystem;
   }
 
+  // === Room State Binding ===
+
+  /**
+   * Bind to Colyseus room state to listen for zone state changes (lock + floor color).
+   * Called by the network layer once a Colyseus room is joined and state is available.
+   *
+   * Listens for ZoneStateSchema changes on the room state `zones` map:
+   * - isLocked: display/remove lock indicator on doorway tiles
+   * - floorColorIndex: apply/clear floor tint for affected zone
+   *
+   * Also applies initial state for zones with non-default floorColorIndex.
+   *
+   * @param room - The Colyseus room instance with synchronized state
+   */
+  bindRoomState(room: any): void {
+    if (!room || !room.state || !room.state.zones) {
+      return;
+    }
+
+    const zones = room.state.zones;
+
+    // Listen for new zone states being added
+    zones.onAdd((zoneState: any, zoneId: string) => {
+      // Apply initial state
+      this.applyZoneLockState(zoneId, zoneState.isLocked);
+      this.applyZoneFloorColor(zoneId, zoneState.floorColorIndex);
+
+      // Listen for changes on this zone state
+      zoneState.onChange(() => {
+        this.applyZoneLockState(zoneId, zoneState.isLocked);
+        this.applyZoneFloorColor(zoneId, zoneState.floorColorIndex);
+      });
+    });
+
+    // Handle zone states that are removed (unlikely but handle gracefully)
+    zones.onRemove((_zoneState: any, zoneId: string) => {
+      this.removeLockIndicator(zoneId);
+      this.clearZoneFloorColor(zoneId);
+    });
+  }
+
+  /**
+   * Apply or remove lock indicator for a zone based on its locked state.
+   */
+  private applyZoneLockState(zoneId: string, isLocked: boolean): void {
+    if (isLocked) {
+      this.showLockIndicator(zoneId);
+    } else {
+      this.removeLockIndicator(zoneId);
+    }
+  }
+
+  /**
+   * Apply or clear floor tint for a zone based on its floorColorIndex.
+   */
+  private applyZoneFloorColor(zoneId: string, floorColorIndex: number): void {
+    const zone = this.findPrivateZoneById(zoneId);
+    if (!zone) return;
+
+    if (floorColorIndex >= 0 && floorColorIndex < FLOOR_COLORS.length) {
+      // Convert hex string to number (e.g., '#2D1B69' → 0x2D1B69)
+      const hexString = FLOOR_COLORS[floorColorIndex];
+      const colorNumber = parseInt(hexString.replace('#', ''), 16);
+      this.mapManager.applyFloorTint(zone, colorNumber);
+    } else {
+      // -1 or invalid index means no tint (default appearance)
+      this.mapManager.clearFloorTint(zone);
+    }
+  }
+
+  /**
+   * Clear floor tint for a zone (called when zone state is removed).
+   */
+  private clearZoneFloorColor(zoneId: string): void {
+    const zone = this.findPrivateZoneById(zoneId);
+    if (!zone) return;
+    this.mapManager.clearFloorTint(zone);
+  }
+
+  /**
+   * Display red padlock overlay graphics on the doorway tiles of a locked zone.
+   */
+  private showLockIndicator(zoneId: string): void {
+    // Remove existing indicators for this zone first
+    this.removeLockIndicator(zoneId);
+
+    const zone = this.findPrivateZoneById(zoneId);
+    if (!zone) return;
+
+    // Find door tiles adjacent to this zone's bounds
+    const doorTilesForZone = this.findDoorTilesForZone(zone);
+    if (doorTilesForZone.length === 0) return;
+
+    const indicators: Phaser.GameObjects.Graphics[] = [];
+
+    for (const doorPos of doorTilesForZone) {
+      const graphics = this.add.graphics();
+      graphics.setDepth(6); // UI overlays depth
+
+      const pixelX = doorPos.tileX * TILE_SIZE;
+      const pixelY = doorPos.tileY * TILE_SIZE;
+
+      // Draw semi-transparent red overlay on the door tile
+      graphics.fillStyle(0xFF4444, 0.4);
+      graphics.fillRect(pixelX, pixelY, TILE_SIZE, TILE_SIZE);
+
+      // Draw a small padlock shape (simplified)
+      const centerX = pixelX + TILE_SIZE / 2;
+      const centerY = pixelY + TILE_SIZE / 2;
+
+      // Padlock body (red rectangle)
+      graphics.fillStyle(0xFF4444, 0.9);
+      graphics.fillRect(centerX - 5, centerY - 2, 10, 8);
+
+      // Padlock shackle (arc/rectangle on top)
+      graphics.lineStyle(2, 0xFF4444, 0.9);
+      graphics.strokeRect(centerX - 3, centerY - 7, 6, 6);
+
+      indicators.push(graphics);
+    }
+
+    this.lockIndicators.set(zoneId, indicators);
+  }
+
+  /**
+   * Remove lock indicator graphics for a zone.
+   */
+  private removeLockIndicator(zoneId: string): void {
+    const indicators = this.lockIndicators.get(zoneId);
+    if (indicators) {
+      for (const gfx of indicators) {
+        gfx.destroy();
+      }
+      this.lockIndicators.delete(zoneId);
+    }
+  }
+
+  /**
+   * Find door tiles that are adjacent to (within 1 tile of) a zone's bounds.
+   * Door tiles are on the wall line bordering the zone interior.
+   */
+  private findDoorTilesForZone(zone: PrivateZone): { tileX: number; tileY: number }[] {
+    const doors = this.mapManager.getDoorTiles();
+    const result: { tileX: number; tileY: number }[] = [];
+
+    // Zone bounds in tile coordinates
+    const zoneTileX = Math.floor(zone.bounds.x / TILE_SIZE);
+    const zoneTileY = Math.floor(zone.bounds.y / TILE_SIZE);
+    const zoneTileW = Math.floor(zone.bounds.width / TILE_SIZE);
+    const zoneTileH = Math.floor(zone.bounds.height / TILE_SIZE);
+
+    for (const door of doors) {
+      // Check if the door tile is on the perimeter or within 1 tile of the zone bounds
+      const isAdjacentX = door.tileX >= zoneTileX - 1 && door.tileX <= zoneTileX + zoneTileW;
+      const isAdjacentY = door.tileY >= zoneTileY - 1 && door.tileY <= zoneTileY + zoneTileH;
+
+      if (isAdjacentX && isAdjacentY) {
+        // Additional check: the door should be on the edge (not deep inside)
+        const isOnXEdge = door.tileX === zoneTileX - 1 || door.tileX === zoneTileX + zoneTileW;
+        const isOnYEdge = door.tileY === zoneTileY - 1 || door.tileY === zoneTileY + zoneTileH;
+        const isWithinX = door.tileX >= zoneTileX && door.tileX < zoneTileX + zoneTileW;
+        const isWithinY = door.tileY >= zoneTileY && door.tileY < zoneTileY + zoneTileH;
+
+        if ((isOnXEdge && isWithinY) || (isOnYEdge && isWithinX)) {
+          result.push({ tileX: door.tileX, tileY: door.tileY });
+        }
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Find a PrivateZone by its ID.
+   */
+  private findPrivateZoneById(zoneId: string): PrivateZone | null {
+    const zones = this.mapManager.getPrivateZones();
+    return zones.find(z => z.id === zoneId) ?? null;
+  }
+
   // === Private Methods ===
 
   /**
-   * Set up keyboard input for arrows and WASD.
+   * Set up keyboard input for arrow keys.
    */
   private setupInput(): void {
     if (!this.input.keyboard) {
@@ -537,20 +743,13 @@ export class GameScene extends Phaser.Scene {
 
     this.cursors = this.input.keyboard.createCursorKeys();
 
-    this.wasdKeys = {
-      W: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.W),
-      A: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.A),
-      S: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.S),
-      D: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.D),
-    };
-
     this.escapeKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ESC);
     this.shiftKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SHIFT);
   }
 
   /**
    * Read current input and return the movement direction, or null if no input.
-   * Supports both arrow keys and WASD. Priority: up > down > left > right.
+   * Uses arrow keys only. Priority: up > down > left > right.
    */
   private getInputDirection(): Direction | null {
     // Don't capture keyboard input when a text field is focused
@@ -559,10 +758,10 @@ export class GameScene extends Phaser.Scene {
       return null;
     }
 
-    const up = this.cursors?.up?.isDown || this.wasdKeys?.W?.isDown;
-    const down = this.cursors?.down?.isDown || this.wasdKeys?.S?.isDown;
-    const left = this.cursors?.left?.isDown || this.wasdKeys?.A?.isDown;
-    const right = this.cursors?.right?.isDown || this.wasdKeys?.D?.isDown;
+    const up = this.cursors?.up?.isDown;
+    const down = this.cursors?.down?.isDown;
+    const left = this.cursors?.left?.isDown;
+    const right = this.cursors?.right?.isDown;
 
     if (up) return 'up';
     if (down) return 'down';

@@ -29,6 +29,8 @@ import { onZoneChange } from './ui/zoneEvents';
 import { getAvatarPosition } from './ui/avatarPosition';
 import { SettingsMenu } from './ui/components/SettingsMenu';
 import { CollapsibleSection } from './ui/components/CollapsibleSection';
+import { PadlockIcon } from './ui/components/PadlockIcon';
+import { FloorColorPicker } from './ui/components/FloorColorPicker';
 import { Direction } from '../shared/types';
 
 // === Configuration from environment or defaults ===
@@ -399,12 +401,58 @@ const GameOverlay: React.FC<GameOverlayProps> = ({
   const [allSectionsState, setAllSectionsState] = React.useState<boolean | null>(false);
   const [currentZoneId, setCurrentZoneId] = React.useState<string | null>(null);
   const [homeRoom, setHomeRoom] = React.useState<HomeRoomData | null>(getMyHomeRoom());
+  const [isRoomLocked, setIsRoomLocked] = React.useState(false);
+  const [floorColorIndex, setFloorColorIndex] = React.useState<number | null>(null);
 
   // Listen for zone changes via global event bus
   React.useEffect(() => {
     const unsub = onZoneChange((zoneId) => setCurrentZoneId(zoneId));
     return unsub;
   }, []);
+
+  // Listen for zone state changes from Colyseus (lock state, floor color)
+  React.useEffect(() => {
+    const room = colyseusClient.getRoom();
+    if (!room || !homeRoom) return;
+
+    const zoneId = homeRoom.zoneId;
+
+    // Check if zones map already has the zone state
+    const existingZone = room.state.zones?.get(zoneId);
+    if (existingZone) {
+      setIsRoomLocked(existingZone.isLocked);
+      setFloorColorIndex(existingZone.floorColorIndex >= 0 ? existingZone.floorColorIndex : null);
+    }
+
+    // Listen for additions to zones map
+    const onAdd = (zoneState: any, key: string) => {
+      if (key === zoneId) {
+        setIsRoomLocked(zoneState.isLocked);
+        setFloorColorIndex(zoneState.floorColorIndex >= 0 ? zoneState.floorColorIndex : null);
+        zoneState.onChange(() => {
+          setIsRoomLocked(zoneState.isLocked);
+          setFloorColorIndex(zoneState.floorColorIndex >= 0 ? zoneState.floorColorIndex : null);
+        });
+      }
+    };
+
+    // Register onChange for existing zone
+    if (existingZone) {
+      existingZone.onChange(() => {
+        setIsRoomLocked(existingZone.isLocked);
+        setFloorColorIndex(existingZone.floorColorIndex >= 0 ? existingZone.floorColorIndex : null);
+      });
+    }
+
+    // Listen for newly added zones
+    if (room.state.zones) {
+      room.state.zones.onAdd(onAdd);
+    }
+
+    return () => {
+      // Colyseus doesn't provide an offAdd, so we rely on component unmount
+    };
+  }, [colyseusClient, homeRoom]);
 
   // Update music progress every 500ms
   React.useEffect(() => {
@@ -522,7 +570,30 @@ const GameOverlay: React.FC<GameOverlayProps> = ({
       React.createElement(CollapsibleSection, { title: '🏠 Minha Sala', defaultOpen: false, forceState: allSectionsState },
         homeRoom
           ? React.createElement('div', { className: 'home-room-info' },
-              React.createElement('span', { className: 'home-room-name' }, `📍 ${homeRoom.zoneId}`),
+              React.createElement('div', { className: 'home-room-header', style: { display: 'flex', alignItems: 'center', gap: '4px' } },
+                React.createElement('span', { className: 'home-room-name' }, `📍 ${homeRoom.zoneId}`),
+                React.createElement(PadlockIcon, {
+                  isLocked: isRoomLocked,
+                  hasHomeRoom: true,
+                  onToggle: () => {
+                    const room = colyseusClient.getRoom();
+                    if (room) {
+                      const message = isRoomLocked ? 'unlock_room' : 'lock_room';
+                      room.send(message, { zoneId: homeRoom.zoneId });
+                    }
+                  },
+                })
+              ),
+              React.createElement(FloorColorPicker, {
+                currentColorIndex: floorColorIndex,
+                hasHomeRoom: true,
+                onSelectColor: (index: number) => {
+                  const room = colyseusClient.getRoom();
+                  if (room) {
+                    room.send('set_floor_color', { zoneId: homeRoom.zoneId, colorIndex: index });
+                  }
+                },
+              }),
               React.createElement('button', {
                 className: 'home-room-btn home-room-btn--reset',
                 onClick: () => { clearMyHomeRoom(); setHomeRoom(null); },

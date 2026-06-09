@@ -27,11 +27,23 @@ export class MusicSchema extends Schema {
 }
 
 /**
+ * Schema representing a private zone's lock and customization state.
+ * Each zone can be locked by its owner and have a custom floor color.
+ */
+export class ZoneStateSchema extends Schema {
+  @type("string") zoneId: string = "";
+  @type("boolean") isLocked: boolean = false;
+  @type("string") ownerSessionId: string = "";
+  @type("int8") floorColorIndex: number = -1; // -1 = no tint
+}
+
+/**
  * Root state schema for a spatial room.
- * Contains all players, music state, and map version for synchronization.
+ * Contains all players, music state, map version, and zone states for synchronization.
  */
 export class RoomState extends Schema {
   @type({ map: PlayerSchema }) players = new MapSchema<PlayerSchema>();
   @type(MusicSchema) music: MusicSchema = new MusicSchema();
   @type("string") mapVersion: string = "";
+  @type({ map: ZoneStateSchema }) zones = new MapSchema<ZoneStateSchema>();
 }

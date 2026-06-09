@@ -61,6 +61,11 @@ export interface TiledProperty {
   value: string | boolean;
 }
 
+export interface TiledTilesetTile {
+  id: number;
+  properties?: TiledProperty[];
+}
+
 export interface TiledTileset {
   firstgid: number;
   name: string;
@@ -71,6 +76,7 @@ export interface TiledTileset {
   image: string;
   imagewidth: number;
   imageheight: number;
+  tiles?: TiledTilesetTile[];
 }
 
 export interface TiledObject {

@@ -28,7 +28,7 @@ describe('ParticipantList', () => {
     expect(screen.getByText('Diana')).toBeDefined();
   });
 
-  it('renders avatar emoji for each participant', () => {
+  it('renders avatar image for each participant', () => {
     const onLocate = vi.fn();
     const onFollow = vi.fn();
     render(
@@ -39,16 +39,14 @@ describe('ParticipantList', () => {
       />
     );
 
-    // Alice has avatarId 2 (robot) -> 🤖
+    // Each participant should have an avatar label span
     const avatarLabels = screen.getAllByLabelText(/^Avatar:/);
     expect(avatarLabels).toHaveLength(4);
-    expect(avatarLabels[0].textContent).toBe('🤖');
-    // Bob has avatarId 8 (drone) -> 🛸
-    expect(avatarLabels[1].textContent).toBe('🛸');
-    // Charlie has avatarId 14 (space soldier) -> 🚀
-    expect(avatarLabels[2].textContent).toBe('🚀');
-    // Diana has avatarId 18 (alien) -> 👾
-    expect(avatarLabels[3].textContent).toBe('👾');
+    // The component now renders <img> tags inside the avatar span
+    avatarLabels.forEach((label) => {
+      const img = label.querySelector('img');
+      expect(img).not.toBeNull();
+    });
   });
 
   it('shows private zone indicator for participants in a zone', () => {

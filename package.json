@@ -1,6 +1,6 @@
 {
   "name": "7gather",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Spatial collaboration platform - virtual 2D office",
   "private": true,
   "scripts": {
@@ -34,6 +34,7 @@
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.0",
+    "fast-check": "^3.22.0",
     "jsdom": "^29.1.1",
     "ts-node": "^10.9.2",
     "typescript": "^5.4.5",

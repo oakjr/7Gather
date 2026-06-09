@@ -264,9 +264,10 @@ function createMockTiledMapManager(options: {
   mapWidth?: number;
   mapHeight?: number;
   physicsLayerTiles?: Array<{ x: number; y: number; properties?: Record<string, unknown>; collides?: boolean }>;
+  objectsTileLayerTiles?: Array<{ x: number; y: number; properties?: Record<string, unknown>; collides?: boolean }>;
   privateZoneTiles?: Array<{ x: number; y: number; jitsiRoom: string }>;
 }) {
-  const { mapWidth = 10, mapHeight = 10, physicsLayerTiles = [], privateZoneTiles = [] } = options;
+  const { mapWidth = 10, mapHeight = 10, physicsLayerTiles = [], objectsTileLayerTiles, privateZoneTiles = [] } = options;
 
   // Build physics layer tile lookup
   const physicsTileMap = new Map<string, { properties: Record<string, unknown>; collides: boolean }>();
@@ -275,6 +276,17 @@ function createMockTiledMapManager(options: {
       properties: t.properties ?? { collide: true },
       collides: t.collides ?? true,
     });
+  }
+
+  // Build objects tile layer lookup (if provided)
+  const objectsTileMap = new Map<string, { properties: Record<string, unknown>; collides: boolean }>();
+  if (objectsTileLayerTiles) {
+    for (const t of objectsTileLayerTiles) {
+      objectsTileMap.set(`${t.x},${t.y}`, {
+        properties: t.properties ?? { collide: true },
+        collides: t.collides ?? true,
+      });
+    }
   }
 
   // Build private zone tile lookup for all layers
@@ -294,6 +306,17 @@ function createMockTiledMapManager(options: {
     setCollisionByProperty: vi.fn(),
   };
 
+  // Mock objects tile layer (null if not provided)
+  const mockObjectsTileLayer = objectsTileLayerTiles !== undefined ? {
+    getTileAt: vi.fn((tileX: number, tileY: number) => {
+      const key = `${tileX},${tileY}`;
+      const entry = objectsTileMap.get(key);
+      if (!entry) return null;
+      return { properties: entry.properties, collides: entry.collides };
+    }),
+    setCollisionByProperty: vi.fn(),
+  } : null;
+
   // Mock tilemap
   const mockTilemap = {
     worldToTileX: vi.fn((x: number) => {
@@ -306,7 +329,36 @@ function createMockTiledMapManager(options: {
       if (tileY < 0 || tileY >= mapHeight) return null;
       return tileY;
     }),
-    getLayer: vi.fn((name: string) => {
+    getObjectLayer: vi.fn((_name: string) => {
+      // Return zone definitions from privateZoneTiles if available
+      if (privateZoneTiles.length === 0) return null;
+      
+      // Group tiles by jitsiRoom to create zone rectangles
+      const zoneGroups = new Map<string, { minX: number; minY: number; maxX: number; maxY: number }>();
+      for (const t of privateZoneTiles) {
+        if (!zoneGroups.has(t.jitsiRoom)) {
+          zoneGroups.set(t.jitsiRoom, { minX: t.x, minY: t.y, maxX: t.x, maxY: t.y });
+        } else {
+          const g = zoneGroups.get(t.jitsiRoom)!;
+          g.minX = Math.min(g.minX, t.x);
+          g.minY = Math.min(g.minY, t.y);
+          g.maxX = Math.max(g.maxX, t.x);
+          g.maxY = Math.max(g.maxY, t.y);
+        }
+      }
+
+      const objects = Array.from(zoneGroups.entries()).map(([name, g]) => ({
+        name,
+        x: g.minX * 32,
+        y: g.minY * 32,
+        width: (g.maxX - g.minX + 1) * 32,
+        height: (g.maxY - g.minY + 1) * 32,
+        properties: [{ name: 'jitsiRoom', value: name }],
+      }));
+
+      return { objects };
+    }),
+    getLayer: vi.fn((_name: string) => {
       // Build layer data with tiles
       const layerData: unknown[][] = [];
       for (let row = 0; row < mapHeight; row++) {
@@ -316,7 +368,7 @@ function createMockTiledMapManager(options: {
           const jitsiRoom = privateZoneTileMap.get(key);
           if (jitsiRoom) {
             layerData[row][col] = {
-              index: 1,
+              index: 11, // ZONE_TILE_INDEX for private zone detection
               properties: { jitsiRoom },
             };
           } else {
@@ -339,12 +391,13 @@ function createMockTiledMapManager(options: {
   // Inject mocked tilemap and physicsLayer using private field access
   (manager as unknown as { tilemap: unknown }).tilemap = mockTilemap;
   (manager as unknown as { physicsLayer: unknown }).physicsLayer = mockPhysicsLayer;
+  (manager as unknown as { objectsTileLayer: unknown }).objectsTileLayer = mockObjectsTileLayer;
 
   // Detect private zones using the mock tilemap
   const zones = (manager as unknown as { detectPrivateZones: (tilemap: unknown) => unknown[] }).detectPrivateZones(mockTilemap);
   (manager as unknown as { privateZones: unknown[] }).privateZones = zones;
 
-  return { manager, mockTilemap, mockPhysicsLayer };
+  return { manager, mockTilemap, mockPhysicsLayer, mockObjectsTileLayer };
 }
 
 describe('TiledMapManager.isColliding', () => {
@@ -457,5 +510,638 @@ describe('TiledMapManager.getPrivateZoneAt', () => {
     expect(zoneA!.id).toBe('room-a');
     expect(zoneB).not.toBeNull();
     expect(zoneB!.id).toBe('room-b');
+  });
+});
+
+
+describe('TiledMapManager.isColliding with ObjectsTiles layer', () => {
+  it('should return true when ObjectsTiles layer has a tile with collide: true property', () => {
+    const { manager } = createMockTiledMapManager({
+      physicsLayerTiles: [],
+      objectsTileLayerTiles: [
+        { x: 4, y: 5, properties: { collide: true }, collides: true },
+      ],
+    });
+
+    // Position in pixels: tile (4,5) => pixel (128, 160)
+    expect(manager.isColliding(128, 160)).toBe(true);
+  });
+
+  it('should return false when ObjectsTiles layer has a tile without collide property', () => {
+    const { manager } = createMockTiledMapManager({
+      physicsLayerTiles: [],
+      objectsTileLayerTiles: [
+        { x: 4, y: 5, properties: {}, collides: false },
+      ],
+    });
+
+    expect(manager.isColliding(128, 160)).toBe(false);
+  });
+
+  it('should return true when ObjectsTiles layer tile has collides flag from Phaser', () => {
+    const { manager } = createMockTiledMapManager({
+      physicsLayerTiles: [],
+      objectsTileLayerTiles: [
+        { x: 2, y: 3, properties: {}, collides: true },
+      ],
+    });
+
+    expect(manager.isColliding(64, 96)).toBe(true);
+  });
+
+  it('should return true if Physics layer blocks even when ObjectsTiles does not', () => {
+    const { manager } = createMockTiledMapManager({
+      physicsLayerTiles: [
+        { x: 1, y: 1, properties: { collide: true }, collides: true },
+      ],
+      objectsTileLayerTiles: [
+        { x: 1, y: 1, properties: {}, collides: false },
+      ],
+    });
+
+    expect(manager.isColliding(32, 32)).toBe(true);
+  });
+
+  it('should return true if ObjectsTiles layer blocks even when Physics layer does not', () => {
+    const { manager } = createMockTiledMapManager({
+      physicsLayerTiles: [],
+      objectsTileLayerTiles: [
+        { x: 6, y: 7, properties: { collide: true }, collides: true },
+      ],
+    });
+
+    expect(manager.isColliding(192, 224)).toBe(true);
+  });
+
+  it('should return false when ObjectsTiles layer is null (missing in map)', () => {
+    const { manager } = createMockTiledMapManager({
+      physicsLayerTiles: [],
+      // objectsTileLayerTiles not provided => objectsTileLayer is null
+    });
+
+    // No physics tiles, no ObjectsTiles layer => no collision
+    expect(manager.isColliding(64, 64)).toBe(false);
+  });
+
+  it('should return false when neither layer has collision at position', () => {
+    const { manager } = createMockTiledMapManager({
+      physicsLayerTiles: [
+        { x: 0, y: 0, properties: { collide: false }, collides: false },
+      ],
+      objectsTileLayerTiles: [
+        { x: 0, y: 0, properties: { collide: false }, collides: false },
+      ],
+    });
+
+    expect(manager.isColliding(0, 0)).toBe(false);
+  });
+});
+
+describe('TiledMapManager.getObjectsTileLayer', () => {
+  it('should return null when no ObjectsTiles layer was loaded', () => {
+    const mockScene = {
+      make: { tilemap: vi.fn() },
+      cache: { tilemap: { get: vi.fn() } },
+    } as unknown;
+
+    const manager = new TiledMapManager(mockScene as Phaser.Scene);
+
+    expect(manager.getObjectsTileLayer()).toBeNull();
+  });
+
+  it('should return the ObjectsTiles layer when it exists', () => {
+    const { manager, mockObjectsTileLayer } = createMockTiledMapManager({
+      objectsTileLayerTiles: [
+        { x: 1, y: 1, properties: { collide: true }, collides: true },
+      ],
+    });
+
+    expect(manager.getObjectsTileLayer()).toBe(mockObjectsTileLayer);
+  });
+});
+
+
+// --- Floor Tint Tests ---
+
+/**
+ * Creates a mock TiledMapManager with a physics layer containing zone floor tiles (index 10)
+ * for testing applyFloorTint and clearFloorTint.
+ */
+function createMockTiledMapManagerWithFloorTiles(options: {
+  mapWidth?: number;
+  mapHeight?: number;
+  floorTiles?: Array<{ x: number; y: number }>;
+  otherTiles?: Array<{ x: number; y: number; index: number }>;
+}) {
+  const { mapWidth = 10, mapHeight = 10, floorTiles = [], otherTiles = [] } = options;
+  const ZONE_FLOOR_TILE_INDEX = 10;
+
+  // Build a tile grid for the physics layer mock
+  const tileGrid = new Map<string, { index: number; tint: number }>();
+  for (const t of floorTiles) {
+    tileGrid.set(`${t.x},${t.y}`, { index: ZONE_FLOOR_TILE_INDEX, tint: 0xFFFFFF });
+  }
+  for (const t of otherTiles) {
+    tileGrid.set(`${t.x},${t.y}`, { index: t.index, tint: 0xFFFFFF });
+  }
+
+  const mockPhysicsLayer = {
+    getTileAt: vi.fn((tileX: number, tileY: number) => {
+      const key = `${tileX},${tileY}`;
+      const entry = tileGrid.get(key);
+      if (!entry) return null;
+      return entry; // Returns the mutable object so tint can be set
+    }),
+    setCollisionByProperty: vi.fn(),
+    setCollisionByExclusion: vi.fn(),
+  };
+
+  const mockTilemap = {
+    worldToTileX: vi.fn((x: number) => Math.floor(x / 32)),
+    worldToTileY: vi.fn((y: number) => Math.floor(y / 32)),
+    width: mapWidth,
+    height: mapHeight,
+  };
+
+  const mockScene = {
+    make: { tilemap: vi.fn() },
+    cache: { tilemap: { get: vi.fn() } },
+  } as unknown;
+
+  const manager = new TiledMapManager(mockScene as Phaser.Scene);
+
+  // Inject mocked fields
+  (manager as unknown as { tilemap: unknown }).tilemap = mockTilemap;
+  (manager as unknown as { physicsLayer: unknown }).physicsLayer = mockPhysicsLayer;
+
+  return { manager, mockPhysicsLayer, tileGrid };
+}
+
+describe('TiledMapManager.applyFloorTint', () => {
+  it('should tint all zone floor tiles (index 10) within zone bounds', () => {
+    const { manager, tileGrid } = createMockTiledMapManagerWithFloorTiles({
+      floorTiles: [
+        { x: 2, y: 2 },
+        { x: 3, y: 2 },
+        { x: 2, y: 3 },
+        { x: 3, y: 3 },
+      ],
+    });
+
+    const zone: import('./TiledMapManager').PrivateZone = {
+      id: 'test-room',
+      bounds: { x: 64, y: 64, width: 64, height: 64 } as Phaser.Geom.Rectangle,
+      tiles: [],
+    };
+
+    manager.applyFloorTint(zone, 0x2D1B69);
+
+    // All floor tiles within bounds should be tinted
+    expect(tileGrid.get('2,2')!.tint).toBe(0x2D1B69);
+    expect(tileGrid.get('3,2')!.tint).toBe(0x2D1B69);
+    expect(tileGrid.get('2,3')!.tint).toBe(0x2D1B69);
+    expect(tileGrid.get('3,3')!.tint).toBe(0x2D1B69);
+  });
+
+  it('should only tint tiles with index 10, not other tiles', () => {
+    const { manager, tileGrid } = createMockTiledMapManagerWithFloorTiles({
+      floorTiles: [{ x: 2, y: 2 }],
+      otherTiles: [
+        { x: 3, y: 2, index: 11 }, // zone detection tile
+        { x: 2, y: 3, index: 2 },  // wall tile
+      ],
+    });
+
+    const zone: import('./TiledMapManager').PrivateZone = {
+      id: 'test-room',
+      bounds: { x: 64, y: 64, width: 64, height: 64 } as Phaser.Geom.Rectangle,
+      tiles: [],
+    };
+
+    manager.applyFloorTint(zone, 0xFF0000);
+
+    // Only the floor tile (index 10) should be tinted
+    expect(tileGrid.get('2,2')!.tint).toBe(0xFF0000);
+    // Other tiles should remain untinted
+    expect(tileGrid.get('3,2')!.tint).toBe(0xFFFFFF);
+    expect(tileGrid.get('2,3')!.tint).toBe(0xFFFFFF);
+  });
+
+  it('should not tint floor tiles outside zone bounds', () => {
+    const { manager, tileGrid } = createMockTiledMapManagerWithFloorTiles({
+      floorTiles: [
+        { x: 2, y: 2 }, // inside bounds
+        { x: 5, y: 5 }, // outside bounds
+      ],
+    });
+
+    const zone: import('./TiledMapManager').PrivateZone = {
+      id: 'test-room',
+      bounds: { x: 64, y: 64, width: 32, height: 32 } as Phaser.Geom.Rectangle,
+      tiles: [],
+    };
+
+    manager.applyFloorTint(zone, 0x00E5FF);
+
+    // Only tile inside bounds should be tinted
+    expect(tileGrid.get('2,2')!.tint).toBe(0x00E5FF);
+    // Tile outside bounds should remain default
+    expect(tileGrid.get('5,5')!.tint).toBe(0xFFFFFF);
+  });
+
+  it('should do nothing when tilemap is not loaded', () => {
+    const mockScene = {
+      make: { tilemap: vi.fn() },
+      cache: { tilemap: { get: vi.fn() } },
+    } as unknown;
+
+    const manager = new TiledMapManager(mockScene as Phaser.Scene);
+    const zone: import('./TiledMapManager').PrivateZone = {
+      id: 'test-room',
+      bounds: { x: 0, y: 0, width: 64, height: 64 } as Phaser.Geom.Rectangle,
+      tiles: [],
+    };
+
+    // Should not throw
+    expect(() => manager.applyFloorTint(zone, 0xFF0000)).not.toThrow();
+  });
+
+  it('should replace previously applied tint with new color', () => {
+    const { manager, tileGrid } = createMockTiledMapManagerWithFloorTiles({
+      floorTiles: [{ x: 2, y: 2 }],
+    });
+
+    const zone: import('./TiledMapManager').PrivateZone = {
+      id: 'test-room',
+      bounds: { x: 64, y: 64, width: 32, height: 32 } as Phaser.Geom.Rectangle,
+      tiles: [],
+    };
+
+    // Apply first tint
+    manager.applyFloorTint(zone, 0xFF0000);
+    expect(tileGrid.get('2,2')!.tint).toBe(0xFF0000);
+
+    // Apply second tint — should replace
+    manager.applyFloorTint(zone, 0x00FF00);
+    expect(tileGrid.get('2,2')!.tint).toBe(0x00FF00);
+  });
+});
+
+describe('TiledMapManager.clearFloorTint', () => {
+  it('should reset tint to white (0xFFFFFF) for all zone floor tiles', () => {
+    const { manager, tileGrid } = createMockTiledMapManagerWithFloorTiles({
+      floorTiles: [
+        { x: 2, y: 2 },
+        { x: 3, y: 2 },
+      ],
+    });
+
+    const zone: import('./TiledMapManager').PrivateZone = {
+      id: 'test-room',
+      bounds: { x: 64, y: 64, width: 64, height: 32 } as Phaser.Geom.Rectangle,
+      tiles: [],
+    };
+
+    // First apply a tint
+    manager.applyFloorTint(zone, 0x2D1B69);
+    expect(tileGrid.get('2,2')!.tint).toBe(0x2D1B69);
+    expect(tileGrid.get('3,2')!.tint).toBe(0x2D1B69);
+
+    // Then clear it
+    manager.clearFloorTint(zone);
+    expect(tileGrid.get('2,2')!.tint).toBe(0xFFFFFF);
+    expect(tileGrid.get('3,2')!.tint).toBe(0xFFFFFF);
+  });
+
+  it('should do nothing when tilemap is not loaded', () => {
+    const mockScene = {
+      make: { tilemap: vi.fn() },
+      cache: { tilemap: { get: vi.fn() } },
+    } as unknown;
+
+    const manager = new TiledMapManager(mockScene as Phaser.Scene);
+    const zone: import('./TiledMapManager').PrivateZone = {
+      id: 'test-room',
+      bounds: { x: 0, y: 0, width: 64, height: 64 } as Phaser.Geom.Rectangle,
+      tiles: [],
+    };
+
+    // Should not throw
+    expect(() => manager.clearFloorTint(zone)).not.toThrow();
+  });
+});
+
+
+// Import DoorTile for type reference
+import type { DoorTile } from './TiledMapManager';
+
+/**
+ * Creates a mock TiledMapManager with door tiles support for testing getDoorTiles() and setDoorState().
+ */
+function createMockDoorTiledMapManager(options: {
+  mapWidth?: number;
+  mapHeight?: number;
+  doorTiles?: Array<{ x: number; y: number; isOpen?: boolean }>;
+  closedIndex?: number;
+  openIndex?: number;
+}) {
+  const {
+    mapWidth = 10,
+    mapHeight = 10,
+    doorTiles = [],
+    closedIndex = 16, // firstgid(1) + tile id(15) = 16
+    openIndex = 17,   // firstgid(1) + tile id(16) = 17
+  } = options;
+
+  // Build ObjectsTiles layer data for tilemap.getLayer()
+  const objectsTilesData: unknown[][] = [];
+  for (let row = 0; row < mapHeight; row++) {
+    objectsTilesData[row] = [];
+    for (let col = 0; col < mapWidth; col++) {
+      const door = doorTiles.find(d => d.x === col && d.y === row);
+      if (door) {
+        objectsTilesData[row][col] = {
+          index: door.isOpen ? openIndex : closedIndex,
+          properties: {},
+        };
+      } else {
+        objectsTilesData[row][col] = { index: -1, properties: {} };
+      }
+    }
+  }
+
+  // Track the tile state for putTileAt verification
+  const tileStateMap = new Map<string, number>();
+  for (const door of doorTiles) {
+    tileStateMap.set(`${door.x},${door.y}`, door.isOpen ? openIndex : closedIndex);
+  }
+
+  // Mock ObjectsTiles layer
+  const mockObjectsTileLayer = {
+    getTileAt: vi.fn((tileX: number, tileY: number) => {
+      const key = `${tileX},${tileY}`;
+      const index = tileStateMap.get(key);
+      if (index === undefined) return null;
+      return { index, properties: {} };
+    }),
+    setCollisionByProperty: vi.fn(),
+    putTileAt: vi.fn((index: number, tileX: number, tileY: number) => {
+      tileStateMap.set(`${tileX},${tileY}`, index);
+      return { index };
+    }),
+  };
+
+  // Mock physics layer (empty, no collisions)
+  const mockPhysicsLayer = {
+    getTileAt: vi.fn(() => null),
+    setCollisionByProperty: vi.fn(),
+  };
+
+  // Mock tilemap with getLayer that returns the ObjectsTiles data
+  const mockTilemap = {
+    worldToTileX: vi.fn((x: number) => {
+      const tileX = Math.floor(x / 32);
+      if (tileX < 0 || tileX >= mapWidth) return null;
+      return tileX;
+    }),
+    worldToTileY: vi.fn((y: number) => {
+      const tileY = Math.floor(y / 32);
+      if (tileY < 0 || tileY >= mapHeight) return null;
+      return tileY;
+    }),
+    getObjectLayer: vi.fn(() => null),
+    getLayer: vi.fn((name: string) => {
+      if (name === 'ObjectsTiles') {
+        return { height: mapHeight, width: mapWidth, data: objectsTilesData };
+      }
+      if (name === 'Physics') {
+        // Empty physics layer
+        const emptyData: unknown[][] = [];
+        for (let row = 0; row < mapHeight; row++) {
+          emptyData[row] = [];
+          for (let col = 0; col < mapWidth; col++) {
+            emptyData[row][col] = { index: -1, properties: {} };
+          }
+        }
+        return { height: mapHeight, width: mapWidth, data: emptyData };
+      }
+      return null;
+    }),
+  };
+
+  // Mock map JSON with tileset containing door tile properties
+  const mockMapJson = {
+    width: mapWidth,
+    height: mapHeight,
+    tilewidth: 32,
+    tileheight: 32,
+    layers: [],
+    tilesets: [{
+      firstgid: 1,
+      name: 'tileset',
+      tilewidth: 32,
+      tileheight: 32,
+      tilecount: 64,
+      columns: 8,
+      image: 'tileset.png',
+      imagewidth: 256,
+      imageheight: 256,
+      tiles: [
+        { id: 15, properties: [{ name: 'doorState', type: 'string', value: 'closed' }] },
+        { id: 16, properties: [{ name: 'doorState', type: 'string', value: 'open' }] },
+      ],
+    }],
+  };
+
+  const mockScene = {
+    make: { tilemap: vi.fn() },
+    cache: { tilemap: { get: vi.fn() } },
+  } as unknown;
+
+  const manager = new TiledMapManager(mockScene as Phaser.Scene);
+
+  // Inject mocked internal state
+  (manager as unknown as { tilemap: unknown }).tilemap = mockTilemap;
+  (manager as unknown as { physicsLayer: unknown }).physicsLayer = mockPhysicsLayer;
+  (manager as unknown as { objectsTileLayer: unknown }).objectsTileLayer = mockObjectsTileLayer;
+  (manager as unknown as { mapJson: unknown }).mapJson = mockMapJson;
+  (manager as unknown as { privateZones: unknown[] }).privateZones = [];
+
+  // Trigger door detection
+  const detectedDoors = (manager as unknown as { detectDoorTiles: () => DoorTile[] }).detectDoorTiles();
+  (manager as unknown as { doorTiles: DoorTile[] }).doorTiles = detectedDoors;
+
+  return { manager, mockObjectsTileLayer, tileStateMap, closedIndex, openIndex };
+}
+
+
+describe('TiledMapManager.getDoorTiles', () => {
+  it('should return an empty array when no door tiles exist', () => {
+    const { manager } = createMockDoorTiledMapManager({
+      doorTiles: [],
+    });
+
+    expect(manager.getDoorTiles()).toEqual([]);
+  });
+
+  it('should detect closed door tiles from ObjectsTiles layer', () => {
+    const { manager } = createMockDoorTiledMapManager({
+      doorTiles: [
+        { x: 3, y: 2, isOpen: false },
+        { x: 3, y: 3, isOpen: false },
+      ],
+    });
+
+    const doors = manager.getDoorTiles();
+    expect(doors).toHaveLength(2);
+    expect(doors[0]).toEqual({
+      tileX: 3,
+      tileY: 2,
+      closedIndex: 16,
+      openIndex: 17,
+      isOpen: false,
+    });
+    expect(doors[1]).toEqual({
+      tileX: 3,
+      tileY: 3,
+      closedIndex: 16,
+      openIndex: 17,
+      isOpen: false,
+    });
+  });
+
+  it('should detect open door tiles from ObjectsTiles layer', () => {
+    const { manager } = createMockDoorTiledMapManager({
+      doorTiles: [
+        { x: 5, y: 4, isOpen: true },
+      ],
+    });
+
+    const doors = manager.getDoorTiles();
+    expect(doors).toHaveLength(1);
+    expect(doors[0]).toEqual({
+      tileX: 5,
+      tileY: 4,
+      closedIndex: 16,
+      openIndex: 17,
+      isOpen: true,
+    });
+  });
+
+  it('should detect a mix of open and closed door tiles', () => {
+    const { manager } = createMockDoorTiledMapManager({
+      doorTiles: [
+        { x: 1, y: 1, isOpen: false },
+        { x: 7, y: 5, isOpen: true },
+        { x: 2, y: 8, isOpen: false },
+      ],
+    });
+
+    const doors = manager.getDoorTiles();
+    expect(doors).toHaveLength(3);
+
+    const closedDoors = doors.filter(d => !d.isOpen);
+    const openDoors = doors.filter(d => d.isOpen);
+    expect(closedDoors).toHaveLength(2);
+    expect(openDoors).toHaveLength(1);
+  });
+
+  it('should store correct closedIndex and openIndex from tileset properties', () => {
+    const { manager } = createMockDoorTiledMapManager({
+      doorTiles: [{ x: 4, y: 4, isOpen: false }],
+    });
+
+    const doors = manager.getDoorTiles();
+    // firstgid=1, closed tile id=15 => GID 16, open tile id=16 => GID 17
+    expect(doors[0].closedIndex).toBe(16);
+    expect(doors[0].openIndex).toBe(17);
+  });
+
+  it('should return empty array when ObjectsTiles layer is null', () => {
+    const mockScene = {
+      make: { tilemap: vi.fn() },
+      cache: { tilemap: { get: vi.fn() } },
+    } as unknown;
+
+    const manager = new TiledMapManager(mockScene as Phaser.Scene);
+    expect(manager.getDoorTiles()).toEqual([]);
+  });
+});
+
+
+describe('TiledMapManager.setDoorState', () => {
+  it('should swap a closed door to open state', () => {
+    const { manager, mockObjectsTileLayer, openIndex } = createMockDoorTiledMapManager({
+      doorTiles: [{ x: 3, y: 2, isOpen: false }],
+    });
+
+    manager.setDoorState(3, 2, true);
+
+    expect(mockObjectsTileLayer.putTileAt).toHaveBeenCalledWith(openIndex, 3, 2);
+    const doors = manager.getDoorTiles();
+    expect(doors[0].isOpen).toBe(true);
+  });
+
+  it('should swap an open door to closed state', () => {
+    const { manager, mockObjectsTileLayer, closedIndex } = createMockDoorTiledMapManager({
+      doorTiles: [{ x: 5, y: 4, isOpen: true }],
+    });
+
+    manager.setDoorState(5, 4, false);
+
+    expect(mockObjectsTileLayer.putTileAt).toHaveBeenCalledWith(closedIndex, 5, 4);
+    const doors = manager.getDoorTiles();
+    expect(doors[0].isOpen).toBe(false);
+  });
+
+  it('should not call putTileAt if door is already in the desired state', () => {
+    const { manager, mockObjectsTileLayer } = createMockDoorTiledMapManager({
+      doorTiles: [{ x: 3, y: 2, isOpen: false }],
+    });
+
+    manager.setDoorState(3, 2, false);
+
+    expect(mockObjectsTileLayer.putTileAt).not.toHaveBeenCalled();
+  });
+
+  it('should not throw when setting state on a non-existent door position', () => {
+    const { manager, mockObjectsTileLayer } = createMockDoorTiledMapManager({
+      doorTiles: [{ x: 3, y: 2, isOpen: false }],
+    });
+
+    // Should not throw, just log a warning
+    expect(() => manager.setDoorState(9, 9, true)).not.toThrow();
+    expect(mockObjectsTileLayer.putTileAt).not.toHaveBeenCalled();
+  });
+
+  it('should handle multiple door tiles independently', () => {
+    const { manager, mockObjectsTileLayer, openIndex, closedIndex } = createMockDoorTiledMapManager({
+      doorTiles: [
+        { x: 1, y: 1, isOpen: false },
+        { x: 2, y: 1, isOpen: false },
+      ],
+    });
+
+    // Open only the first door
+    manager.setDoorState(1, 1, true);
+
+    const doors = manager.getDoorTiles();
+    expect(doors[0].isOpen).toBe(true);
+    expect(doors[1].isOpen).toBe(false);
+
+    expect(mockObjectsTileLayer.putTileAt).toHaveBeenCalledTimes(1);
+    expect(mockObjectsTileLayer.putTileAt).toHaveBeenCalledWith(openIndex, 1, 1);
+  });
+
+  it('should not throw when objectsTileLayer is null', () => {
+    const mockScene = {
+      make: { tilemap: vi.fn() },
+      cache: { tilemap: { get: vi.fn() } },
+    } as unknown;
+
+    const manager = new TiledMapManager(mockScene as Phaser.Scene);
+
+    // Should not throw, just log a warning
+    expect(() => manager.setDoorState(0, 0, true)).not.toThrow();
   });
 });
