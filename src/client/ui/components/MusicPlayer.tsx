@@ -10,14 +10,36 @@ export interface MusicTrackInfo {
 export interface MusicPlayerProps {
   currentTrack: MusicTrackInfo | null;
   volume: number;
+  /** Whether the local user has muted the music for themselves */
+  isMusicMuted?: boolean;
+  /** Whether music is paused */
+  isPaused?: boolean;
   onVolumeChange: (vol: number) => void;
-  onPlay: (source: string) => void;
+  onPlay: (source: string, displayName?: string) => void;
   onStop: () => void;
+  /** Toggle local music mute */
+  onToggleMusicMute?: () => void;
+  /** Toggle pause/resume */
+  onTogglePause?: () => void;
+  /** Current playback time in seconds */
+  currentTime?: number;
+  /** Total duration in seconds */
+  duration?: number;
+  /** Callback to seek to a specific time */
+  onSeek?: (time: number) => void;
 }
 
 /** Supported audio formats for shared music. */
 const SUPPORTED_FORMATS = ['mp3', 'ogg', 'wav'];
 const SUPPORTED_MIME_TYPES = ['audio/mpeg', 'audio/ogg', 'audio/wav'];
+
+/** Formats seconds into MM:SS display. */
+function formatTime(seconds: number): string {
+  if (!isFinite(seconds) || seconds < 0) return '0:00';
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
 
 /** Extracts a display name from a source URL or filename. */
 function getTrackDisplayName(source: string): string {
@@ -56,9 +78,16 @@ function isValidAudioFile(file: File): boolean {
 export const MusicPlayer: React.FC<MusicPlayerProps> = ({
   currentTrack,
   volume,
+  isMusicMuted = false,
+  isPaused = false,
   onVolumeChange,
   onPlay,
   onStop,
+  onToggleMusicMute,
+  onTogglePause,
+  currentTime = 0,
+  duration = 0,
+  onSeek,
 }) => {
   const [urlInput, setUrlInput] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -94,15 +123,15 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
 
       if (!isValidAudioFile(file)) {
         setError('Formato não suportado. Use MP3, OGG ou WAV.');
-        // Reset file input
         if (fileInputRef.current) {
           fileInputRef.current.value = '';
         }
         return;
       }
 
-      onPlay(file.name);
-      // Reset file input for next use
+      // Create a blob URL so the audio element can load the local file
+      const blobUrl = URL.createObjectURL(file);
+      onPlay(blobUrl, file.name);
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
@@ -140,6 +169,23 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
             </span>
           </div>
 
+          {/* Progress bar */}
+          {duration > 0 && (
+            <div className="music-progress">
+              <span className="music-progress-time">{formatTime(currentTime)}</span>
+              <input
+                type="range"
+                className="music-progress-bar"
+                min={0}
+                max={duration || 1}
+                value={currentTime}
+                onChange={(e) => onSeek?.(Number(e.target.value))}
+                aria-label="Progresso da música"
+              />
+              <span className="music-progress-time">{formatTime(duration)}</span>
+            </div>
+          )}
+
           <div className="music-player-controls">
             <label htmlFor="music-volume-slider" className="music-volume-label">
               Volume: {volume}%
@@ -156,15 +202,36 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
               aria-valuemax={100}
               aria-valuenow={volume}
             />
+          </div>
 
+          <div className="music-player-actions">
             <button
               type="button"
-              className="music-stop-btn"
+              className="music-action-btn"
+              onClick={onTogglePause}
+              aria-label={isPaused ? 'Retomar música' : 'Pausar música'}
+            >
+              {isPaused ? '▶ Play' : '⏸ Pausar'}
+            </button>
+            <button
+              type="button"
+              className="music-action-btn music-action-btn--danger"
               onClick={handleStop}
               aria-label="Parar música"
             >
               ⏹ Parar
             </button>
+            {onToggleMusicMute && (
+              <button
+                type="button"
+                className={`music-action-btn${isMusicMuted ? ' music-action-btn--danger' : ''}`}
+                onClick={onToggleMusicMute}
+                aria-label={isMusicMuted ? 'Reativar música' : 'Silenciar música para mim'}
+                aria-pressed={isMusicMuted}
+              >
+                {isMusicMuted ? '🔊 Unmute' : '🔇 Mute'}
+              </button>
+            )}
           </div>
         </div>
       ) : (

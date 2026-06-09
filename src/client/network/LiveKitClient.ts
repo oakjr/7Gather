@@ -383,16 +383,21 @@ export class LiveKitClient {
    * @throws Error if the format is not supported or the URL is inaccessible
    */
   async publishMusicTrack(source: string): Promise<void> {
-    // Validate format
-    const format = this.extractMusicFormat(source);
-    if (!format) {
-      throw new Error(
-        `[LiveKitClient] Unsupported music format. Supported formats: ${SUPPORTED_MUSIC_FORMATS.join(", ")}`
-      );
-    }
+    // Skip format/accessibility validation for blob URLs (local file uploads)
+    const isBlobUrl = source.startsWith('blob:');
 
-    // Validate URL accessibility
-    await this.validateMusicSource(source);
+    if (!isBlobUrl) {
+      // Validate format
+      const format = this.extractMusicFormat(source);
+      if (!format) {
+        throw new Error(
+          `[LiveKitClient] Unsupported music format. Supported formats: ${SUPPORTED_MUSIC_FORMATS.join(", ")}`
+        );
+      }
+
+      // Validate URL accessibility
+      await this.validateMusicSource(source);
+    }
 
     // Stop any existing music track before publishing a new one
     if (this.isMusicPlaying) {
@@ -402,7 +407,7 @@ export class LiveKitClient {
     // Create an audio element to load the music
     const audioElement = new Audio(source);
     audioElement.crossOrigin = "anonymous";
-    audioElement.loop = true;
+    audioElement.loop = false;
 
     // Wait for the audio to be loadable
     await new Promise<void>((resolve, reject) => {
@@ -426,7 +431,10 @@ export class LiveKitClient {
     const audioContext = new AudioContext();
     const sourceNode = audioContext.createMediaElementSource(audioElement);
     const destination = audioContext.createMediaStreamDestination();
+
+    // Connect to both: LiveKit stream AND local speakers
     sourceNode.connect(destination);
+    sourceNode.connect(audioContext.destination);
 
     // Get the audio track from the media stream
     const mediaStreamTrack = destination.stream.getAudioTracks()[0];
@@ -513,6 +521,65 @@ export class LiveKitClient {
         audioElement.volume = this.musicVolume / 100;
       }
     }
+  }
+
+  /**
+   * Returns the current music playback progress as { currentTime, duration } in seconds.
+   * Returns null if no music is playing.
+   */
+  getMusicProgress(): { currentTime: number; duration: number } | null {
+    if (!this.isMusicPlaying || !this.musicTrack) return null;
+    const audioElement = (this.musicTrack as any)._audioElement as HTMLAudioElement | undefined;
+    if (!audioElement) return null;
+    return {
+      currentTime: audioElement.currentTime || 0,
+      duration: audioElement.duration || 0,
+    };
+  }
+
+  /**
+   * Seeks the music to a specific time in seconds.
+   */
+  seekMusic(time: number): void {
+    if (!this.isMusicPlaying || !this.musicTrack) return;
+    const audioElement = (this.musicTrack as any)._audioElement as HTMLAudioElement | undefined;
+    if (audioElement && isFinite(time)) {
+      audioElement.currentTime = Math.max(0, Math.min(time, audioElement.duration || 0));
+    }
+  }
+
+  /**
+   * Toggles pause/resume of the music track.
+   * @returns true if now paused, false if now playing
+   */
+  toggleMusicPause(): boolean {
+    if (!this.isMusicPlaying || !this.musicTrack) return false;
+    const audioElement = (this.musicTrack as any)._audioElement as HTMLAudioElement | undefined;
+    if (!audioElement) return false;
+    if (audioElement.paused) {
+      audioElement.play();
+      return false;
+    } else {
+      audioElement.pause();
+      return true;
+    }
+  }
+
+  /**
+   * Returns whether the music is currently paused.
+   */
+  getIsMusicPaused(): boolean {
+    if (!this.isMusicPlaying || !this.musicTrack) return false;
+    const audioElement = (this.musicTrack as any)._audioElement as HTMLAudioElement | undefined;
+    return audioElement?.paused ?? false;
+  }
+
+  /**
+   * Returns the underlying audio element for the music track (for progress listeners).
+   */
+  getMusicAudioElement(): HTMLAudioElement | null {
+    if (!this.musicTrack) return null;
+    return (this.musicTrack as any)._audioElement || null;
   }
 
   // === Audio Channel Switching (Private Zones) ===

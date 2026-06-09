@@ -73,9 +73,9 @@ export class TiledMapManager {
       throw new Error('Failed to create one or more required tilemap layers');
     }
 
-    // Set collision on Physics layer for non-zero tiles
-    // Tiles with collide property or any non-zero tile in Physics layer blocks movement
-    physicsLayer.setCollisionByExclusion([-1, 0]);
+    // Set collision on Physics layer for wall tiles only (tile 3)
+    // Tile 11 (private zones) should be walkable
+    physicsLayer.setCollisionByExclusion([-1, 0, 11]);
 
     this.tilemap = tilemap;
     this.physicsLayer = physicsLayer;
@@ -152,6 +152,81 @@ export class TiledMapManager {
   }
 
   /**
+   * BFS pathfinding from startTile to endTile, avoiding walls.
+   * Returns an array of tile positions forming the path, or null if no path found.
+   * If avoidMeetingRoom is true, treats sala-reuniao tiles as walls (unless target is inside).
+   */
+  findPath(
+    startX: number, startY: number,
+    endX: number, endY: number,
+    avoidMeetingRoom: boolean = true
+  ): { x: number; y: number }[] | null {
+    if (!this.tilemap) return null;
+
+    const width = this.tilemap.width;
+    const height = this.tilemap.height;
+
+    // Check if target is inside the meeting room
+    const targetInMeeting = this.getPrivateZoneAt(endX, endY)?.id === 'sala-reuniao';
+
+    // BFS
+    const visited = new Set<string>();
+    const queue: { x: number; y: number; path: { x: number; y: number }[] }[] = [];
+    const key = (x: number, y: number) => `${x},${y}`;
+
+    queue.push({ x: startX, y: startY, path: [] });
+    visited.add(key(startX, startY));
+
+    const directions = [
+      { dx: 0, dy: -1 }, { dx: 0, dy: 1 },
+      { dx: -1, dy: 0 }, { dx: 1, dy: 0 },
+    ];
+
+    let iterations = 0;
+    const maxIterations = width * height; // prevent infinite loop
+
+    while (queue.length > 0 && iterations < maxIterations) {
+      iterations++;
+      const current = queue.shift()!;
+
+      if (current.x === endX && current.y === endY) {
+        return [...current.path, { x: endX, y: endY }];
+      }
+
+      for (const dir of directions) {
+        const nx = current.x + dir.dx;
+        const ny = current.y + dir.dy;
+        const nKey = key(nx, ny);
+
+        if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+        if (visited.has(nKey)) continue;
+
+        // Check if tile is walkable
+        const pixelX = nx * TILE_SIZE + TILE_SIZE / 2;
+        const pixelY = ny * TILE_SIZE + TILE_SIZE / 2;
+        if (this.isColliding(pixelX, pixelY)) {
+          visited.add(nKey);
+          continue;
+        }
+
+        // Avoid meeting room tiles unless target is inside it
+        if (avoidMeetingRoom && !targetInMeeting) {
+          const zone = this.getPrivateZoneAt(nx, ny);
+          if (zone && zone.id === 'sala-reuniao') {
+            visited.add(nKey);
+            continue;
+          }
+        }
+
+        visited.add(nKey);
+        queue.push({ x: nx, y: ny, path: [...current.path, { x: current.x, y: current.y }] });
+      }
+    }
+
+    return null; // No path found
+  }
+
+  /**
    * Validate a Tiled map JSON file without requiring Phaser.
    * Pure function that checks structure, required layers, and file size.
    * Delegates to the standalone validateMapFile utility.
@@ -165,64 +240,82 @@ export class TiledMapManager {
   }
 
   /**
-   * Detect private zones from the tilemap by scanning for tiles with "jitsiRoom" property.
-   * Groups contiguous tiles by zone ID and computes bounding rectangles.
+   * Detect private zones by scanning for tile index 11 in the Physics layer
+   * and matching positions with Objects layer zone definitions.
    */
   private detectPrivateZones(tilemap: Phaser.Tilemaps.Tilemap): PrivateZone[] {
+    const ZONE_TILE_INDEX = 11; // gid 11 = private zone floor
     const zoneMap = new Map<string, Phaser.Math.Vector2[]>();
 
-    // Scan all layers for tiles with "jitsiRoom" property
-    const layerNames = ['Ground', 'Physics', 'Objects', 'Top'];
+    // Get zone definitions from the Objects layer
+    const objectLayer = tilemap.getObjectLayer('Objects');
+    const zoneObjects = objectLayer?.objects || [];
 
-    for (const layerName of layerNames) {
-      const layer = tilemap.getLayer(layerName);
-      if (!layer) continue;
+    // Build zone definitions: rectangles with their jitsiRoom name
+    const zoneDefs: { name: string; x: number; y: number; w: number; h: number }[] = [];
+    for (const obj of zoneObjects) {
+      const jitsiProp = obj.properties?.find((p: any) => p.name === 'jitsiRoom');
+      const zoneName = jitsiProp?.value || obj.name || '';
+      if (zoneName) {
+        zoneDefs.push({
+          name: zoneName,
+          x: Math.floor((obj.x || 0) / TILE_SIZE),
+          y: Math.floor((obj.y || 0) / TILE_SIZE),
+          w: Math.floor((obj.width || 0) / TILE_SIZE),
+          h: Math.floor((obj.height || 0) / TILE_SIZE),
+        });
+      }
+    }
 
+    // Scan Physics layer for zone tiles (index 11)
+    const layer = tilemap.getLayer('Physics');
+    if (layer) {
       for (let y = 0; y < layer.height; y++) {
         for (let x = 0; x < layer.width; x++) {
           const tile = layer.data[y][x];
-          if (!tile || tile.index === -1) continue;
+          if (!tile || tile.index !== ZONE_TILE_INDEX) continue;
 
-          const jitsiRoom = this.getTileProperty(tile, 'jitsiRoom');
-          if (jitsiRoom && typeof jitsiRoom === 'string') {
-            if (!zoneMap.has(jitsiRoom)) {
-              zoneMap.set(jitsiRoom, []);
+          // Find which zone object contains this tile
+          let zoneName = '';
+          for (const def of zoneDefs) {
+            if (x >= def.x && x < def.x + def.w && y >= def.y && y < def.y + def.h) {
+              zoneName = def.name;
+              break;
             }
-            zoneMap.get(jitsiRoom)!.push(new Phaser.Math.Vector2(x, y));
           }
+
+          // Fallback: generate a name from position
+          if (!zoneName) {
+            zoneName = `zone_${x}_${y}`;
+          }
+
+          if (!zoneMap.has(zoneName)) {
+            zoneMap.set(zoneName, []);
+          }
+          zoneMap.get(zoneName)!.push(new Phaser.Math.Vector2(x, y));
         }
       }
     }
 
-    // Convert to PrivateZone objects with bounding rectangles
+    // Convert to PrivateZone objects
     const zones: PrivateZone[] = [];
-
     for (const [id, tiles] of zoneMap) {
       if (tiles.length === 0) continue;
-
-      let minX = Infinity;
-      let minY = Infinity;
-      let maxX = -Infinity;
-      let maxY = -Infinity;
-
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
       for (const tile of tiles) {
         minX = Math.min(minX, tile.x);
         minY = Math.min(minY, tile.y);
         maxX = Math.max(maxX, tile.x);
         maxY = Math.max(maxY, tile.y);
       }
-
-      // Bounds in pixel coordinates
       const bounds = new Phaser.Geom.Rectangle(
-        minX * TILE_SIZE,
-        minY * TILE_SIZE,
-        (maxX - minX + 1) * TILE_SIZE,
-        (maxY - minY + 1) * TILE_SIZE
+        minX * TILE_SIZE, minY * TILE_SIZE,
+        (maxX - minX + 1) * TILE_SIZE, (maxY - minY + 1) * TILE_SIZE
       );
-
       zones.push({ id, bounds, tiles });
     }
 
+    console.log(`[TiledMapManager] Detected ${zones.length} private zones:`, zones.map(z => z.id));
     return zones;
   }
 

@@ -6,27 +6,28 @@ import { setAvatarId } from '../avatarStorage';
 interface AvatarMeta {
   id: number;
   name: string;
-  category: 'robots' | 'drones' | 'space-soldiers' | 'pixelated-aliens';
+  category: 'crew' | 'aliens' | 'vehicles';
 }
 
-/** Maps avatar IDs to categories (5 per category). */
+/** Maps avatar IDs to categories (6 per category). */
 function getAvatarMeta(id: number): AvatarMeta {
-  if (id >= 1 && id <= 5) {
-    return { id, name: `Robot ${id}`, category: 'robots' };
-  } else if (id >= 6 && id <= 10) {
-    return { id, name: `Drone ${id - 5}`, category: 'drones' };
-  } else if (id >= 11 && id <= 15) {
-    return { id, name: `Space Soldier ${id - 10}`, category: 'space-soldiers' };
-  } else {
-    return { id, name: `Alien ${id - 15}`, category: 'pixelated-aliens' };
-  }
+  const names: Record<number, string> = {
+    1: 'Astronauta', 2: 'Comandante', 3: 'Piloto',
+    4: 'Engenheiro', 5: 'Cientista', 6: 'Médico',
+    7: 'Alien Verde', 8: 'Alien Roxo', 9: 'Alien Azul',
+    10: 'Robô', 11: 'Andróide', 12: 'Cyborg',
+    13: 'Nave', 14: 'UFO', 15: 'Satélite',
+    16: 'Estrela', 17: 'Planeta', 18: 'Cometa',
+  };
+  if (id >= 1 && id <= 6) return { id, name: names[id], category: 'crew' };
+  if (id >= 7 && id <= 12) return { id, name: names[id], category: 'aliens' };
+  return { id, name: names[id] || `Avatar ${id}`, category: 'vehicles' };
 }
 
 const CATEGORY_LABELS: Record<AvatarMeta['category'], string> = {
-  robots: 'Robôs',
-  drones: 'Drones',
-  'space-soldiers': 'Soldados Espaciais',
-  'pixelated-aliens': 'Aliens Pixelados',
+  crew: '👨‍🚀 Tripulação',
+  aliens: '👾 Aliens & Robôs',
+  vehicles: '🚀 Naves & Astros',
 };
 
 const ALL_AVATARS: AvatarMeta[] = Array.from({ length: MAX_AVATARS }, (_, i) =>
@@ -177,14 +178,12 @@ export const AvatarSelector: React.FC<AvatarSelectorProps> = ({ onSelect }) => {
 
 function getCategoryEmoji(category: AvatarMeta['category']): string {
   switch (category) {
-    case 'robots':
-      return '🤖';
-    case 'drones':
-      return '🛸';
-    case 'space-soldiers':
-      return '🚀';
-    case 'pixelated-aliens':
+    case 'crew':
+      return '👨‍🚀';
+    case 'aliens':
       return '👾';
+    case 'vehicles':
+      return '🚀';
   }
 }
 

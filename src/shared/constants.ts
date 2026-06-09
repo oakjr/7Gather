@@ -4,13 +4,13 @@
  */
 
 /** Avatar movement speed in tiles per second */
-export const AVATAR_SPEED = 4;
+export const AVATAR_SPEED = 6;
 
 /** Tile size in pixels */
 export const TILE_SIZE = 32;
 
 /** Maximum number of avatars (concurrent users) per room */
-export const MAX_AVATARS = 20;
+export const MAX_AVATARS = 18;
 
 /** Maximum number of simultaneous rooms */
 export const MAX_ROOMS = 50;

@@ -104,8 +104,9 @@ export const ParticipantList: React.FC<ParticipantListProps> = ({
                 className="participant-locate-btn"
                 onClick={() => handleLocate(participant.sessionId)}
                 aria-label={`Localizar ${participant.displayName}`}
+                title="Localizar"
               >
-                Localizar
+                🛰️
               </button>
 
               <button
@@ -113,8 +114,9 @@ export const ParticipantList: React.FC<ParticipantListProps> = ({
                 className="participant-follow-btn"
                 onClick={() => handleFollow(participant.sessionId)}
                 aria-label={`Seguir ${participant.displayName}`}
+                title="Seguir"
               >
-                Seguir
+                🚀
               </button>
             </div>
           </li>
