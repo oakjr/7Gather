@@ -260,7 +260,6 @@ describe("SpatialRoom", () => {
       // Colyseus uses room.maxClients to reject connections when the room is full.
       // Requirement 11.4: "WHEN o número de participantes em uma Sala atinge o limite configurado"
       expect(room.maxClients).toBe(MAX_AVATARS);
-      expect(room.maxClients).toBe(20);
     });
 
     it("should allow custom maxClients within valid range (2-50) for room capacity configuration", () => {
@@ -610,6 +609,513 @@ describe("SpatialRoom", () => {
         const music = (room as any).state.music;
         expect(music.source).toBe("track2.ogg");
         expect(music.isPlaying).toBe(true);
+      });
+    });
+
+    describe("lock_room handler (Requirement 14.3, 14.9)", () => {
+      let roomWithZones: SpatialRoom;
+
+      beforeEach(() => {
+        roomWithZones = createRoom();
+        roomWithZones.onCreate({
+          mapData: {
+            width: 50,
+            height: 40,
+            tilewidth: 32,
+            tileheight: 32,
+            layers: [
+              {
+                name: "Objects",
+                type: "objectgroup",
+                objects: [
+                  {
+                    id: 1,
+                    name: "sala-1",
+                    type: "zone",
+                    x: 64,
+                    y: 64,
+                    width: 160,
+                    height: 160,
+                    properties: [{ name: "jitsiRoom", type: "string", value: "sala-1" }],
+                  },
+                ],
+              },
+            ],
+            tilesets: [],
+          },
+        });
+        roomWithZones.onJoin(createMockClient("owner1"), { avatarId: 1, displayName: "Owner" });
+        // Claim the room
+        sendMessage(roomWithZones, "claim_room", createMockClient("owner1"), { zoneId: "sala-1" });
+      });
+
+      it("should set isLocked to true when owner sends lock_room", () => {
+        const client = createMockClient("owner1");
+        sendMessage(roomWithZones, "lock_room", client, { zoneId: "sala-1" });
+
+        const zoneState = (roomWithZones as any).state.zones.get("sala-1");
+        expect(zoneState.isLocked).toBe(true);
+      });
+
+      it("should reject lock_room from non-owner", () => {
+        roomWithZones.onJoin(createMockClient("intruder"), { avatarId: 2, displayName: "Intruder" });
+        const client = createMockClient("intruder");
+        sendMessage(roomWithZones, "lock_room", client, { zoneId: "sala-1" });
+
+        const zoneState = (roomWithZones as any).state.zones.get("sala-1");
+        expect(zoneState.isLocked).toBe(false);
+      });
+
+      it("should reject lock_room with invalid zoneId", () => {
+        const client = createMockClient("owner1");
+        sendMessage(roomWithZones, "lock_room", client, { zoneId: "nonexistent" });
+        // No error thrown, no state change
+      });
+
+      it("should reject lock_room with empty zoneId", () => {
+        const client = createMockClient("owner1");
+        sendMessage(roomWithZones, "lock_room", client, { zoneId: "" });
+        // No error thrown
+      });
+
+      it("should reject lock_room with non-string zoneId", () => {
+        const client = createMockClient("owner1");
+        sendMessage(roomWithZones, "lock_room", client, { zoneId: 123 });
+        // No error thrown
+      });
+    });
+
+    describe("unlock_room handler (Requirement 14.4, 14.9)", () => {
+      let roomWithZones: SpatialRoom;
+
+      beforeEach(() => {
+        roomWithZones = createRoom();
+        roomWithZones.onCreate({
+          mapData: {
+            width: 50,
+            height: 40,
+            tilewidth: 32,
+            tileheight: 32,
+            layers: [
+              {
+                name: "Objects",
+                type: "objectgroup",
+                objects: [
+                  {
+                    id: 1,
+                    name: "sala-1",
+                    type: "zone",
+                    x: 64,
+                    y: 64,
+                    width: 160,
+                    height: 160,
+                    properties: [{ name: "jitsiRoom", type: "string", value: "sala-1" }],
+                  },
+                ],
+              },
+            ],
+            tilesets: [],
+          },
+        });
+        roomWithZones.onJoin(createMockClient("owner1"), { avatarId: 1, displayName: "Owner" });
+        sendMessage(roomWithZones, "claim_room", createMockClient("owner1"), { zoneId: "sala-1" });
+        sendMessage(roomWithZones, "lock_room", createMockClient("owner1"), { zoneId: "sala-1" });
+      });
+
+      it("should set isLocked to false when owner sends unlock_room", () => {
+        const client = createMockClient("owner1");
+        sendMessage(roomWithZones, "unlock_room", client, { zoneId: "sala-1" });
+
+        const zoneState = (roomWithZones as any).state.zones.get("sala-1");
+        expect(zoneState.isLocked).toBe(false);
+      });
+
+      it("should reject unlock_room from non-owner", () => {
+        roomWithZones.onJoin(createMockClient("intruder"), { avatarId: 2, displayName: "Intruder" });
+        const client = createMockClient("intruder");
+        sendMessage(roomWithZones, "unlock_room", client, { zoneId: "sala-1" });
+
+        const zoneState = (roomWithZones as any).state.zones.get("sala-1");
+        expect(zoneState.isLocked).toBe(true);
+      });
+
+      it("should reject unlock_room with invalid zoneId", () => {
+        const client = createMockClient("owner1");
+        sendMessage(roomWithZones, "unlock_room", client, { zoneId: "nonexistent" });
+        // No error, locked zone stays locked
+        const zoneState = (roomWithZones as any).state.zones.get("sala-1");
+        expect(zoneState.isLocked).toBe(true);
+      });
+    });
+
+    describe("set_floor_color handler (Requirements 16.5, 16.6, 16.7, 16.8)", () => {
+      let roomWithZones: SpatialRoom;
+
+      beforeEach(() => {
+        roomWithZones = createRoom();
+        roomWithZones.onCreate({
+          mapData: {
+            width: 50,
+            height: 40,
+            tilewidth: 32,
+            tileheight: 32,
+            layers: [
+              {
+                name: "Objects",
+                type: "objectgroup",
+                objects: [
+                  {
+                    id: 1,
+                    name: "sala-1",
+                    type: "zone",
+                    x: 64,
+                    y: 64,
+                    width: 160,
+                    height: 160,
+                    properties: [{ name: "jitsiRoom", type: "string", value: "sala-1" }],
+                  },
+                ],
+              },
+            ],
+            tilesets: [],
+          },
+        });
+        roomWithZones.onJoin(createMockClient("owner1"), { avatarId: 1, displayName: "Owner" });
+        sendMessage(roomWithZones, "claim_room", createMockClient("owner1"), { zoneId: "sala-1" });
+      });
+
+      it("should update floorColorIndex when owner sends valid index", () => {
+        const client = createMockClient("owner1");
+        sendMessage(roomWithZones, "set_floor_color", client, { zoneId: "sala-1", colorIndex: 5 });
+
+        const zoneState = (roomWithZones as any).state.zones.get("sala-1");
+        expect(zoneState.floorColorIndex).toBe(5);
+      });
+
+      it("should accept colorIndex 0 (minimum valid)", () => {
+        const client = createMockClient("owner1");
+        sendMessage(roomWithZones, "set_floor_color", client, { zoneId: "sala-1", colorIndex: 0 });
+
+        const zoneState = (roomWithZones as any).state.zones.get("sala-1");
+        expect(zoneState.floorColorIndex).toBe(0);
+      });
+
+      it("should accept colorIndex 17 (maximum valid)", () => {
+        const client = createMockClient("owner1");
+        sendMessage(roomWithZones, "set_floor_color", client, { zoneId: "sala-1", colorIndex: 17 });
+
+        const zoneState = (roomWithZones as any).state.zones.get("sala-1");
+        expect(zoneState.floorColorIndex).toBe(17);
+      });
+
+      it("should reject colorIndex 18 (out of range)", () => {
+        const client = createMockClient("owner1");
+        sendMessage(roomWithZones, "set_floor_color", client, { zoneId: "sala-1", colorIndex: 18 });
+
+        const zoneState = (roomWithZones as any).state.zones.get("sala-1");
+        expect(zoneState.floorColorIndex).toBe(-1); // unchanged
+      });
+
+      it("should reject negative colorIndex", () => {
+        const client = createMockClient("owner1");
+        sendMessage(roomWithZones, "set_floor_color", client, { zoneId: "sala-1", colorIndex: -1 });
+
+        const zoneState = (roomWithZones as any).state.zones.get("sala-1");
+        expect(zoneState.floorColorIndex).toBe(-1); // unchanged
+      });
+
+      it("should reject non-integer colorIndex (float)", () => {
+        const client = createMockClient("owner1");
+        sendMessage(roomWithZones, "set_floor_color", client, { zoneId: "sala-1", colorIndex: 2.5 });
+
+        const zoneState = (roomWithZones as any).state.zones.get("sala-1");
+        expect(zoneState.floorColorIndex).toBe(-1); // unchanged
+      });
+
+      it("should reject non-number colorIndex", () => {
+        const client = createMockClient("owner1");
+        sendMessage(roomWithZones, "set_floor_color", client, { zoneId: "sala-1", colorIndex: "5" });
+
+        const zoneState = (roomWithZones as any).state.zones.get("sala-1");
+        expect(zoneState.floorColorIndex).toBe(-1); // unchanged
+      });
+
+      it("should reject set_floor_color from non-owner", () => {
+        roomWithZones.onJoin(createMockClient("intruder"), { avatarId: 2, displayName: "Intruder" });
+        const client = createMockClient("intruder");
+        sendMessage(roomWithZones, "set_floor_color", client, { zoneId: "sala-1", colorIndex: 5 });
+
+        const zoneState = (roomWithZones as any).state.zones.get("sala-1");
+        expect(zoneState.floorColorIndex).toBe(-1); // unchanged
+      });
+
+      it("should reject set_floor_color for nonexistent zone", () => {
+        const client = createMockClient("owner1");
+        sendMessage(roomWithZones, "set_floor_color", client, { zoneId: "nonexistent", colorIndex: 5 });
+        // No error thrown
+      });
+    });
+
+    describe("move handler - locked zone rejection (Requirements 14.5, 14.7)", () => {
+      let roomWithZones: SpatialRoom;
+
+      beforeEach(() => {
+        roomWithZones = createRoom();
+        // Add client.send mock
+        (roomWithZones as any)._clientSendCalls = [] as any[];
+        roomWithZones.onCreate({
+          mapData: {
+            width: 50,
+            height: 40,
+            tilewidth: 32,
+            tileheight: 32,
+            layers: [
+              {
+                name: "Objects",
+                type: "objectgroup",
+                objects: [
+                  {
+                    id: 1,
+                    name: "sala-1",
+                    type: "zone",
+                    x: 64,  // tile x=2
+                    y: 64,  // tile y=2
+                    width: 160, // 5 tiles
+                    height: 160, // 5 tiles
+                    properties: [{ name: "jitsiRoom", type: "string", value: "sala-1" }],
+                  },
+                ],
+              },
+            ],
+            tilesets: [],
+          },
+        });
+        roomWithZones.onJoin(createMockClient("owner1"), { avatarId: 1, displayName: "Owner" });
+        roomWithZones.onJoin(createMockClient("visitor"), { avatarId: 2, displayName: "Visitor" });
+        sendMessage(roomWithZones, "claim_room", createMockClient("owner1"), { zoneId: "sala-1" });
+        sendMessage(roomWithZones, "lock_room", createMockClient("owner1"), { zoneId: "sala-1" });
+      });
+
+      it("should reject non-owner movement into locked zone", () => {
+        const client = { sessionId: "visitor", send: vi.fn() } as any;
+        sendMessage(roomWithZones, "move", client, { x: 3, y: 3, direction: "up", timestamp: Date.now() });
+
+        const player = (roomWithZones as any).state.players.get("visitor");
+        expect(player.x).toBe(0); // unchanged
+        expect(player.y).toBe(0); // unchanged
+      });
+
+      it("should send room_locked notification to rejected client", () => {
+        const client = { sessionId: "visitor", send: vi.fn() } as any;
+        sendMessage(roomWithZones, "move", client, { x: 3, y: 3, direction: "up", timestamp: Date.now() });
+
+        expect(client.send).toHaveBeenCalledWith("room_locked", { zoneId: "sala-1" });
+      });
+
+      it("should allow owner to enter their own locked room", () => {
+        const client = createMockClient("owner1");
+        sendMessage(roomWithZones, "move", client, { x: 3, y: 3, direction: "up", timestamp: Date.now() });
+
+        const player = (roomWithZones as any).state.players.get("owner1");
+        expect(player.x).toBe(3);
+        expect(player.y).toBe(3);
+      });
+
+      it("should allow movement outside locked zone for non-owner", () => {
+        const client = createMockClient("visitor");
+        // Position outside the zone (zone is at tiles 2-6, so tile 1 is outside)
+        sendMessage(roomWithZones, "move", client, { x: 1, y: 1, direction: "up", timestamp: Date.now() });
+
+        const player = (roomWithZones as any).state.players.get("visitor");
+        expect(player.x).toBe(1);
+        expect(player.y).toBe(1);
+      });
+
+      it("should allow movement into unlocked zone for non-owner", () => {
+        // Unlock the room first
+        sendMessage(roomWithZones, "unlock_room", createMockClient("owner1"), { zoneId: "sala-1" });
+
+        const client = createMockClient("visitor");
+        sendMessage(roomWithZones, "move", client, { x: 3, y: 3, direction: "up", timestamp: Date.now() });
+
+        const player = (roomWithZones as any).state.players.get("visitor");
+        expect(player.x).toBe(3);
+        expect(player.y).toBe(3);
+      });
+    });
+
+    describe("Zone initialization on room creation (Requirement 14.9)", () => {
+      it("should initialize ZoneStateSchema for all zones from map data", () => {
+        const roomWithZones = createRoom();
+        roomWithZones.onCreate({
+          mapData: {
+            width: 50,
+            height: 40,
+            tilewidth: 32,
+            tileheight: 32,
+            layers: [
+              {
+                name: "Objects",
+                type: "objectgroup",
+                objects: [
+                  {
+                    id: 1,
+                    name: "sala-1",
+                    type: "zone",
+                    x: 64,
+                    y: 64,
+                    width: 160,
+                    height: 160,
+                    properties: [{ name: "jitsiRoom", type: "string", value: "sala-1" }],
+                  },
+                  {
+                    id: 2,
+                    name: "sala-2",
+                    type: "zone",
+                    x: 256,
+                    y: 64,
+                    width: 160,
+                    height: 160,
+                    properties: [{ name: "jitsiRoom", type: "string", value: "sala-2" }],
+                  },
+                ],
+              },
+            ],
+            tilesets: [],
+          },
+        });
+
+        const zones = (roomWithZones as any).state.zones;
+        expect(zones.size).toBe(2);
+
+        const zone1 = zones.get("sala-1");
+        expect(zone1).toBeDefined();
+        expect(zone1.zoneId).toBe("sala-1");
+        expect(zone1.isLocked).toBe(false);
+        expect(zone1.ownerSessionId).toBe("");
+        expect(zone1.floorColorIndex).toBe(-1);
+
+        const zone2 = zones.get("sala-2");
+        expect(zone2).toBeDefined();
+        expect(zone2.zoneId).toBe("sala-2");
+        expect(zone2.isLocked).toBe(false);
+      });
+
+      it("should have empty zones map when no map data provided", () => {
+        const roomNoMap = createRoom();
+        roomNoMap.onCreate({});
+
+        expect((roomNoMap as any).state.zones.size).toBe(0);
+      });
+
+      it("should skip non-zone objects in the map data", () => {
+        const roomWithMixed = createRoom();
+        roomWithMixed.onCreate({
+          mapData: {
+            width: 50,
+            height: 40,
+            tilewidth: 32,
+            tileheight: 32,
+            layers: [
+              {
+                name: "Objects",
+                type: "objectgroup",
+                objects: [
+                  {
+                    id: 1,
+                    name: "sala-1",
+                    type: "zone",
+                    x: 64,
+                    y: 64,
+                    width: 160,
+                    height: 160,
+                    properties: [{ name: "jitsiRoom", type: "string", value: "sala-1" }],
+                  },
+                  {
+                    id: 2,
+                    name: "decoration",
+                    type: "decoration",
+                    x: 0,
+                    y: 0,
+                    width: 32,
+                    height: 32,
+                    properties: [],
+                  },
+                ],
+              },
+            ],
+            tilesets: [],
+          },
+        });
+
+        expect((roomWithMixed as any).state.zones.size).toBe(1);
+      });
+    });
+
+    describe("Owner disconnect unlock (Requirement 14.10)", () => {
+      let roomWithZones: SpatialRoom;
+
+      beforeEach(() => {
+        roomWithZones = createRoom();
+        roomWithZones.onCreate({
+          mapData: {
+            width: 50,
+            height: 40,
+            tilewidth: 32,
+            tileheight: 32,
+            layers: [
+              {
+                name: "Objects",
+                type: "objectgroup",
+                objects: [
+                  {
+                    id: 1,
+                    name: "sala-1",
+                    type: "zone",
+                    x: 64,
+                    y: 64,
+                    width: 160,
+                    height: 160,
+                    properties: [{ name: "jitsiRoom", type: "string", value: "sala-1" }],
+                  },
+                ],
+              },
+            ],
+            tilesets: [],
+          },
+        });
+        roomWithZones.onJoin(createMockClient("owner1"), { avatarId: 1, displayName: "Owner" });
+        sendMessage(roomWithZones, "claim_room", createMockClient("owner1"), { zoneId: "sala-1" });
+        sendMessage(roomWithZones, "lock_room", createMockClient("owner1"), { zoneId: "sala-1" });
+      });
+
+      it("should unlock room after RECONNECT_TIMEOUT_MS when owner disconnects and does not reconnect", async () => {
+        const client = createMockClient("owner1");
+        (roomWithZones as any).allowReconnection.mockRejectedValue(new Error("timeout"));
+
+        await roomWithZones.onLeave(client, false);
+
+        // After onLeave resolves with timeout, the zone should be unlocked
+        const zoneState = (roomWithZones as any).state.zones.get("sala-1");
+        expect(zoneState.isLocked).toBe(false);
+      });
+
+      it("should keep room locked if owner reconnects in time", async () => {
+        const client = createMockClient("owner1");
+        (roomWithZones as any).allowReconnection.mockResolvedValue(client);
+
+        await roomWithZones.onLeave(client, false);
+
+        const zoneState = (roomWithZones as any).state.zones.get("sala-1");
+        expect(zoneState.isLocked).toBe(true);
+      });
+
+      it("should unlock room immediately on consented leave", async () => {
+        const client = createMockClient("owner1");
+        await roomWithZones.onLeave(client, true);
+
+        const zoneState = (roomWithZones as any).state.zones.get("sala-1");
+        expect(zoneState.isLocked).toBe(false);
       });
     });
   });

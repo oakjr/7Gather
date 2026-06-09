@@ -8,22 +8,21 @@ describe('AvatarSelector', () => {
     localStorage.clear();
   });
 
-  it('renders 20 avatar options', () => {
+  it('renders 18 avatar options', () => {
     const onSelect = vi.fn();
     render(<AvatarSelector onSelect={onSelect} />);
 
     const options = screen.getAllByRole('radio');
-    expect(options).toHaveLength(20);
+    expect(options).toHaveLength(18);
   });
 
   it('renders category headings', () => {
     const onSelect = vi.fn();
     render(<AvatarSelector onSelect={onSelect} />);
 
-    expect(screen.getByText('Robôs')).toBeDefined();
-    expect(screen.getByText('Drones')).toBeDefined();
-    expect(screen.getByText('Soldados Espaciais')).toBeDefined();
-    expect(screen.getByText('Aliens Pixelados')).toBeDefined();
+    expect(screen.getByText('👨‍🚀 Tripulação')).toBeDefined();
+    expect(screen.getByText('👾 Aliens & Robôs')).toBeDefined();
+    expect(screen.getByText('🚀 Naves & Astros')).toBeDefined();
   });
 
   it('marks selected avatar with aria-checked', () => {
@@ -41,37 +40,45 @@ describe('AvatarSelector', () => {
     const onSelect = vi.fn();
     render(<AvatarSelector onSelect={onSelect} />);
 
+    // Type a name first (required for form validity)
+    const nameInput = screen.getByLabelText(/seu nome/i);
+    fireEvent.change(nameInput, { target: { value: 'TestUser' } });
+
     // Select avatar 5
     const options = screen.getAllByRole('radio');
     fireEvent.click(options[4]);
 
-    // Click confirm
-    const confirmBtn = screen.getByRole('button', { name: /confirmar/i });
+    // Click confirm - button label changes to "Entrar como TestUser" when form is valid
+    const confirmBtn = screen.getByRole('button', { name: /entrar como/i });
     fireEvent.click(confirmBtn);
 
     expect(localStorage.getItem('avatar_id')).toBe('5');
-    expect(onSelect).toHaveBeenCalledWith(5);
+    expect(onSelect).toHaveBeenCalledWith(5, 'TestUser');
   });
 
-  it('disables confirm button when no avatar is selected', () => {
+  it('disables confirm button when no avatar is selected and no name entered', () => {
     const onSelect = vi.fn();
     render(<AvatarSelector onSelect={onSelect} />);
 
-    const confirmBtn = screen.getByRole('button', { name: /selecione um avatar/i });
+    const confirmBtn = screen.getByRole('button', { name: /preencha nome e selecione avatar/i });
     expect(confirmBtn.getAttribute('aria-disabled')).toBe('true');
   });
 
-  it('calls onSelect with the correct ID', () => {
+  it('calls onSelect with the correct ID and name', () => {
     const onSelect = vi.fn();
     render(<AvatarSelector onSelect={onSelect} />);
+
+    // Type a name
+    const nameInput = screen.getByLabelText(/seu nome/i);
+    fireEvent.change(nameInput, { target: { value: 'Player1' } });
 
     const options = screen.getAllByRole('radio');
     fireEvent.click(options[14]); // Avatar 15
 
-    const confirmBtn = screen.getByRole('button', { name: /confirmar/i });
+    const confirmBtn = screen.getByRole('button', { name: /entrar como/i });
     fireEvent.click(confirmBtn);
 
-    expect(onSelect).toHaveBeenCalledWith(15);
+    expect(onSelect).toHaveBeenCalledWith(15, 'Player1');
   });
 
   it('supports keyboard selection with Enter key', () => {
@@ -109,6 +116,6 @@ describe('AvatarSelector', () => {
 
     const options = screen.getAllByRole('radio');
     expect(options[0].getAttribute('data-avatar-id')).toBe('1');
-    expect(options[19].getAttribute('data-avatar-id')).toBe('20');
+    expect(options[17].getAttribute('data-avatar-id')).toBe('18');
   });
 });

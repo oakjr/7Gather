@@ -20,6 +20,9 @@ export class PlayerAvatar {
 
   /** Speed in pixels per second (4 tiles/sec * 32 px/tile = 128 px/s) */
   private readonly speed: number = AVATAR_SPEED * TILE_SIZE;
+  /** Sprint multiplier */
+  private readonly sprintMultiplier: number = 3.5;
+  private _isSprinting: boolean = false;
 
   constructor(
     scene: Phaser.Scene,
@@ -38,11 +41,12 @@ export class PlayerAvatar {
     this.sprite = scene.add.sprite(x, y, key);
     this.sprite.setOrigin(0.5, 0.5);
     this.sprite.setDepth(10);
+    this.sprite.setScale(0.55);
 
     // Show display name above avatar
     if (displayName) {
-      this.nameLabel = scene.add.text(x, y - 24, displayName, {
-        fontSize: '12px',
+      this.nameLabel = scene.add.text(x, y - 20, displayName, {
+        fontSize: '18px',
         color: '#ffffff',
         stroke: '#000000',
         strokeThickness: 3,
@@ -89,6 +93,26 @@ export class PlayerAvatar {
     return this.sprite;
   }
 
+  /** Set sprinting state (Shift held) */
+  setSprinting(sprinting: boolean): void {
+    this._isSprinting = sprinting;
+  }
+
+  /** Teleport avatar instantly to a tile position */
+  teleportTo(tileX: number, tileY: number): void {
+    this.sprite.x = tileX * TILE_SIZE + TILE_SIZE / 2;
+    this.sprite.y = tileY * TILE_SIZE + TILE_SIZE / 2;
+    this.updateNameLabelPosition();
+    this.updateMuteIconPosition();
+  }
+
+  /** Adjust name label scale to be zoom-independent */
+  setNameScale(zoom: number): void {
+    if (this.nameLabel && zoom > 0) {
+      this.nameLabel.setScale(1 / zoom);
+    }
+  }
+
   // --- Movement ---
 
   /**
@@ -103,7 +127,8 @@ export class PlayerAvatar {
     this._direction = direction;
 
     const deltaSeconds = delta / 1000;
-    const distance = this.speed * deltaSeconds;
+    const currentSpeed = this._isSprinting ? this.speed * this.sprintMultiplier : this.speed;
+    const distance = currentSpeed * deltaSeconds;
 
     let newX = this.sprite.x;
     let newY = this.sprite.y;
@@ -331,11 +356,12 @@ export class RemoteAvatar {
     this.sprite = scene.add.sprite(x, y, key);
     this.sprite.setOrigin(0.5, 0.5);
     this.sprite.setDepth(10);
+    this.sprite.setScale(0.55);
 
     // Show display name above avatar
     if (displayName) {
-      this.nameLabel = scene.add.text(x, y - 24, displayName, {
-        fontSize: '11px',
+      this.nameLabel = scene.add.text(x, y - 20, displayName, {
+        fontSize: '16px',
         color: '#ffffff',
         stroke: '#000000',
         strokeThickness: 3,
@@ -378,6 +404,13 @@ export class RemoteAvatar {
 
   getSprite(): Phaser.GameObjects.Sprite {
     return this.sprite;
+  }
+
+  /** Adjust name label scale to be zoom-independent */
+  setNameScale(zoom: number): void {
+    if (this.nameLabel && zoom > 0) {
+      this.nameLabel.setScale(1 / zoom);
+    }
   }
 
   // --- Server state updates ---

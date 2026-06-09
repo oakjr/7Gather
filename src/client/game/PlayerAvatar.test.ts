@@ -166,9 +166,9 @@ describe('PlayerAvatar', () => {
 
     it('should return false and not move when colliding with Physics layer', () => {
       // When avatar at (100,100) moves right for 1000ms:
-      // newX = 100 + (4 * 32) = 228, newY = 100
+      // newX = 100 + (6 * 32) = 292, newY = 100
       // isColliding receives pixel coords, mock floors them
-      const collidingPositions = new Set(['228,100']);
+      const collidingPositions = new Set(['292,100']);
       mapManager = createMockMapManager(collidingPositions);
 
       const avatar = new PlayerAvatar(scene, 100, 100, 1, mapManager);

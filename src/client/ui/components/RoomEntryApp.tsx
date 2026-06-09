@@ -95,12 +95,8 @@ export const RoomEntryApp: React.FC<RoomEntryAppProps> = ({ flow, config, onRead
   }
 
   if (flowState === 'ready') {
-    // Game canvas is rendered by the parent; show connection status overlay
-    return (
-      <div className="room-entry room-entry--ready">
-        <ConnectionStatus state="connected" />
-      </div>
-    );
+    // Game canvas and overlay are rendered separately — hide the entry UI
+    return null;
   }
 
   // idle state - nothing to show yet

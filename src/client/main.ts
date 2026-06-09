@@ -8,6 +8,8 @@
 //
 // Requirements: 2.1, 3.6, 8.3, 9.3
 
+import './styles/index.css';
+
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import Phaser from 'phaser';
@@ -21,6 +23,14 @@ import { MediaControls } from './ui/components/MediaControls';
 import { ParticipantList } from './ui/components/ParticipantList';
 import { MusicPlayer } from './ui/components/MusicPlayer';
 import { ConnectionStatus } from './ui/components/ConnectionStatus';
+import { StatusSelector } from './ui/components/StatusSelector';
+import { getMyHomeRoom, setMyHomeRoom, clearMyHomeRoom, isRoomAvailable, HomeRoomData } from './ui/homeRoom';
+import { onZoneChange } from './ui/zoneEvents';
+import { getAvatarPosition } from './ui/avatarPosition';
+import { SettingsMenu } from './ui/components/SettingsMenu';
+import { CollapsibleSection } from './ui/components/CollapsibleSection';
+import { PadlockIcon } from './ui/components/PadlockIcon';
+import { FloorColorPicker } from './ui/components/FloorColorPicker';
 import { Direction } from '../shared/types';
 
 // === Configuration from environment or defaults ===
@@ -118,6 +128,8 @@ class App {
    * Requirements: 2.1, 3.6, 8.3, 9.3
    */
   private onRoomReady(avatarId: number, config: RoomEntryConfig): void {
+    console.log('[App] onRoomReady called, avatarId:', avatarId);
+
     // Create the Phaser game instance
     this.createGame(avatarId, config);
 
@@ -147,6 +159,13 @@ class App {
     gameContainer.style.top = '0';
     gameContainer.style.left = '0';
     document.body.appendChild(gameContainer);
+
+    // Click on game area blurs any focused input so keyboard returns to game
+    gameContainer.addEventListener('pointerdown', () => {
+      if (document.activeElement && document.activeElement instanceof HTMLElement) {
+        document.activeElement.blur();
+      }
+    });
 
     this.game = new Phaser.Game({
       type: Phaser.AUTO,
@@ -305,6 +324,13 @@ class App {
    * Renders the in-game overlay UI (media controls, participant list, music player).
    */
   private renderGameOverlayUI(config: RoomEntryConfig): void {
+    // Hide the root entry UI since the game is now active
+    const rootEl = document.getElementById('root');
+    if (rootEl) {
+      rootEl.style.pointerEvents = 'none';
+      rootEl.style.display = 'none';
+    }
+
     // Create overlay container
     const overlayContainer = document.createElement('div');
     overlayContainer.id = 'game-overlay';
@@ -314,7 +340,7 @@ class App {
     overlayContainer.style.width = '100%';
     overlayContainer.style.height = '100%';
     overlayContainer.style.pointerEvents = 'none';
-    overlayContainer.style.zIndex = '10';
+    overlayContainer.style.zIndex = '1000';
     document.body.appendChild(overlayContainer);
 
     const overlayRoot = createRoot(overlayContainer);
@@ -326,6 +352,8 @@ class App {
         roomId: config.roomId,
       })
     );
+
+    console.log('[App] Overlay rendered, container:', overlayContainer);
   }
 
   /**
@@ -364,6 +392,80 @@ const GameOverlay: React.FC<GameOverlayProps> = ({
   gameScene,
   roomId,
 }) => {
+  const [musicTrack, setMusicTrack] = React.useState<{source: string; startedBy: string; isPlaying: boolean} | null>(null);
+  const [musicVolume, setMusicVolume] = React.useState(livekitClient.getMusicVolume());
+  const [musicProgress, setMusicProgress] = React.useState({ currentTime: 0, duration: 0 });
+  const [isMusicMuted, setIsMusicMuted] = React.useState(false);
+  const [isMusicPaused, setIsMusicPaused] = React.useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = React.useState(false);
+  const [allSectionsState, setAllSectionsState] = React.useState<boolean | null>(false);
+  const [currentZoneId, setCurrentZoneId] = React.useState<string | null>(null);
+  const [homeRoom, setHomeRoom] = React.useState<HomeRoomData | null>(getMyHomeRoom());
+  const [isRoomLocked, setIsRoomLocked] = React.useState(false);
+  const [floorColorIndex, setFloorColorIndex] = React.useState<number | null>(null);
+
+  // Listen for zone changes via global event bus
+  React.useEffect(() => {
+    const unsub = onZoneChange((zoneId) => setCurrentZoneId(zoneId));
+    return unsub;
+  }, []);
+
+  // Listen for zone state changes from Colyseus (lock state, floor color)
+  React.useEffect(() => {
+    const room = colyseusClient.getRoom();
+    if (!room || !homeRoom) return;
+
+    const zoneId = homeRoom.zoneId;
+
+    // Check if zones map already has the zone state
+    const existingZone = room.state.zones?.get(zoneId);
+    if (existingZone) {
+      setIsRoomLocked(existingZone.isLocked);
+      setFloorColorIndex(existingZone.floorColorIndex >= 0 ? existingZone.floorColorIndex : null);
+    }
+
+    // Listen for additions to zones map
+    const onAdd = (zoneState: any, key: string) => {
+      if (key === zoneId) {
+        setIsRoomLocked(zoneState.isLocked);
+        setFloorColorIndex(zoneState.floorColorIndex >= 0 ? zoneState.floorColorIndex : null);
+        zoneState.onChange(() => {
+          setIsRoomLocked(zoneState.isLocked);
+          setFloorColorIndex(zoneState.floorColorIndex >= 0 ? zoneState.floorColorIndex : null);
+        });
+      }
+    };
+
+    // Register onChange for existing zone
+    if (existingZone) {
+      existingZone.onChange(() => {
+        setIsRoomLocked(existingZone.isLocked);
+        setFloorColorIndex(existingZone.floorColorIndex >= 0 ? existingZone.floorColorIndex : null);
+      });
+    }
+
+    // Listen for newly added zones
+    if (room.state.zones) {
+      room.state.zones.onAdd(onAdd);
+    }
+
+    return () => {
+      // Colyseus doesn't provide an offAdd, so we rely on component unmount
+    };
+  }, [colyseusClient, homeRoom]);
+
+  // Update music progress every 500ms
+  React.useEffect(() => {
+    if (!musicTrack) return;
+    const interval = setInterval(() => {
+      const progress = livekitClient.getMusicProgress();
+      if (progress) {
+        setMusicProgress(progress);
+      }
+    }, 500);
+    return () => clearInterval(interval);
+  }, [musicTrack, livekitClient]);
+
   const handleLocate = (sessionId: string) => {
     gameScene?.showLocateLine(sessionId);
   };
@@ -372,58 +474,185 @@ const GameOverlay: React.FC<GameOverlayProps> = ({
     gameScene?.startFollow(sessionId);
   };
 
+  const handlePlay = (source: string, displayName?: string) => {
+    livekitClient.publishMusicTrack(source)
+      .then(() => {
+        const trackName = displayName || source.split('/').pop() || 'Música';
+        setMusicTrack({
+          source: trackName,
+          startedBy: localStorage.getItem('display_name') || 'Eu',
+          isPlaying: true,
+        });
+      })
+      .catch((err) => console.error('[MusicPlayer]', err));
+  };
+
+  const handleStop = () => {
+    livekitClient.stopMusicTrack();
+    setMusicTrack(null);
+  };
+
+  const handleVolumeChange = (vol: number) => {
+    livekitClient.setMusicVolume(vol);
+    setMusicVolume(vol);
+  };
+
+  const handleToggleMusicMute = () => {
+    if (isMusicMuted) {
+      // Unmute: restore previous volume
+      livekitClient.setMusicVolume(musicVolume);
+      setIsMusicMuted(false);
+    } else {
+      // Mute: set volume to 0 but keep slider state
+      livekitClient.setMusicVolume(0);
+      setIsMusicMuted(true);
+    }
+  };
+
   return React.createElement('div', { className: 'game-overlay-inner' },
-    // Connection status (top-right)
-    React.createElement('div', {
-      className: 'overlay-connection-status',
-      style: { position: 'absolute', top: '16px', right: '16px', pointerEvents: 'auto' }
-    },
-      React.createElement(ConnectionStatus, { state: 'connected' })
+    // Sidebar toggle button (always visible)
+    React.createElement('button', {
+      className: `sidebar-toggle-btn${sidebarCollapsed ? '' : ' sidebar-open'}`,
+      onClick: () => setSidebarCollapsed(!sidebarCollapsed),
+      'aria-label': sidebarCollapsed ? 'Abrir painel' : 'Minimizar painel',
+    }, sidebarCollapsed ? '◀' : '▶'),
+    // Sidebar (right side - collapsible)
+    !sidebarCollapsed && React.createElement('div', { className: 'overlay-sidebar' },
+      // Logo
+      React.createElement('div', { className: 'sidebar-logo' },
+        React.createElement('img', { src: '/logo.png', alt: '7Gather', className: 'sidebar-logo-img' })
+      ),
+      // Collapse All / Expand All button
+      React.createElement('button', {
+        className: 'sidebar-collapse-all-btn',
+        onClick: () => {
+          setAllSectionsState(prev => prev === false ? true : false);
+        },
+      }, allSectionsState === false ? '💥 Expandir Tudo' : '🕳️ Colapsar Tudo'),
+      // Status section
+      React.createElement(CollapsibleSection, { title: '🟢 Status', defaultOpen: false, forceState: allSectionsState },
+        React.createElement(StatusSelector, { initialStatus: 'available' })
+      ),
+      // Participants section
+      React.createElement(CollapsibleSection, { title: '👥 Participantes', defaultOpen: false, forceState: allSectionsState },
+        React.createElement(ParticipantList, {
+          participants: [{
+            sessionId: 'local',
+            displayName: localStorage.getItem('display_name') || 'Eu',
+            avatarId: Number(localStorage.getItem('avatar_id')) || 1,
+            currentZone: '',
+          }],
+          onLocate: handleLocate,
+          onFollow: handleFollow,
+        })
+      ),
+      // Music player section
+      React.createElement(CollapsibleSection, { title: '🎵 Música', defaultOpen: false, forceState: allSectionsState },
+        React.createElement(MusicPlayer, {
+          currentTrack: musicTrack,
+          volume: musicVolume,
+          isMusicMuted,
+          onVolumeChange: handleVolumeChange,
+          onPlay: handlePlay,
+          onStop: handleStop,
+          onToggleMusicMute: handleToggleMusicMute,
+          isPaused: isMusicPaused,
+          onTogglePause: () => {
+            const paused = livekitClient.toggleMusicPause();
+            setIsMusicPaused(paused);
+          },
+          currentTime: musicProgress.currentTime,
+          duration: musicProgress.duration,
+          onSeek: (time: number) => livekitClient.seekMusic(time),
+        })
+      ),
+      // Home Room section
+      React.createElement(CollapsibleSection, { title: '🏠 Minha Sala', defaultOpen: false, forceState: allSectionsState },
+        homeRoom
+          ? React.createElement('div', { className: 'home-room-info' },
+              React.createElement('div', { className: 'home-room-header', style: { display: 'flex', alignItems: 'center', gap: '4px' } },
+                React.createElement('span', { className: 'home-room-name' }, `📍 ${homeRoom.zoneId}`),
+                React.createElement(PadlockIcon, {
+                  isLocked: isRoomLocked,
+                  hasHomeRoom: true,
+                  onToggle: () => {
+                    const room = colyseusClient.getRoom();
+                    if (room) {
+                      const message = isRoomLocked ? 'unlock_room' : 'lock_room';
+                      room.send(message, { zoneId: homeRoom.zoneId });
+                    }
+                  },
+                })
+              ),
+              React.createElement(FloorColorPicker, {
+                currentColorIndex: floorColorIndex,
+                hasHomeRoom: true,
+                onSelectColor: (index: number) => {
+                  const room = colyseusClient.getRoom();
+                  if (room) {
+                    room.send('set_floor_color', { zoneId: homeRoom.zoneId, colorIndex: index });
+                  }
+                },
+              }),
+              React.createElement('button', {
+                className: 'home-room-btn home-room-btn--reset',
+                onClick: () => { clearMyHomeRoom(); setHomeRoom(null); },
+              }, '🔄 Redefinir Sala')
+            )
+          : React.createElement('div', { className: 'home-room-info' },
+              currentZoneId && currentZoneId !== 'sala-reuniao' && isRoomAvailable(currentZoneId)
+                ? React.createElement('button', {
+                    className: 'home-room-btn home-room-btn--claim',
+                    onClick: () => {
+                      const displayName = localStorage.getItem('display_name') || 'Eu';
+                      const data = {
+                        zoneId: currentZoneId!,
+                        ownerName: displayName,
+                        spawnTileX: getAvatarPosition().tileX,
+                        spawnTileY: getAvatarPosition().tileY,
+                      };
+                      setMyHomeRoom(data);
+                      setHomeRoom(data);
+                    },
+                  }, '✨ Definir Minha Sala')
+                : React.createElement('span', { className: 'home-room-hint' },
+                    currentZoneId === 'sala-reuniao'
+                      ? 'Sala de reunião não pode ser reivindicada'
+                      : currentZoneId && !isRoomAvailable(currentZoneId)
+                        ? 'Esta sala já tem dono'
+                        : 'Entre numa sala livre para reivindicar'
+                  )
+            )
+      ),
+      // Settings section
+      React.createElement(CollapsibleSection, { title: '⚙️ Opções', defaultOpen: false, forceState: allSectionsState },
+        React.createElement(SettingsMenu, {
+          currentName: localStorage.getItem('display_name') || 'User',
+          currentAvatarId: Number(localStorage.getItem('avatar_id')) || 1,
+        })
+      )
     ),
-    // Media controls (bottom-center)
-    React.createElement('div', {
-      className: 'overlay-media-controls',
-      style: { position: 'absolute', bottom: '16px', left: '50%', transform: 'translateX(-50%)', pointerEvents: 'auto' }
-    },
+    // Media controls (bottom-center, stays floating)
+    React.createElement('div', { className: 'overlay-media-controls' },
       React.createElement(MediaControls, {
-        livekitClient,
-        onMuteToggle: () => livekitClient.toggleMute(),
-        onVideoToggle: () => {
+        isMuted: livekitClient.getIsMuted(),
+        isVideoOn: livekitClient.getIsCameraEnabled(),
+        isScreenSharing: livekitClient.getIsScreenSharing(),
+        onToggleMute: () => livekitClient.toggleMute(),
+        onToggleVideo: () => {
           if (livekitClient.getIsCameraEnabled()) {
             livekitClient.disableCamera();
           } else {
             livekitClient.enableCamera();
           }
         },
-        onScreenShareToggle: () => {
+        onToggleScreenShare: () => {
           if (livekitClient.getIsScreenSharing()) {
             livekitClient.stopScreenShare();
           } else {
             livekitClient.startScreenShare();
           }
         },
-      })
-    ),
-    // Participant list (left side)
-    React.createElement('div', {
-      className: 'overlay-participant-list',
-      style: { position: 'absolute', top: '16px', left: '16px', pointerEvents: 'auto' }
-    },
-      React.createElement(ParticipantList, {
-        colyseusClient,
-        onLocate: handleLocate,
-        onFollow: handleFollow,
-      })
-    ),
-    // Music player (top-center)
-    React.createElement('div', {
-      className: 'overlay-music-player',
-      style: { position: 'absolute', top: '16px', left: '50%', transform: 'translateX(-50%)', pointerEvents: 'auto' }
-    },
-      React.createElement(MusicPlayer, {
-        livekitClient,
-        colyseusClient,
-        roomId,
       })
     )
   );

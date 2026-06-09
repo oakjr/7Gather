@@ -118,6 +118,10 @@ describe('MusicPlayer', () => {
     });
 
     it('calls onPlay when valid audio file is uploaded', () => {
+      // Mock URL.createObjectURL since jsdom doesn't support it
+      const mockBlobUrl = 'blob:http://localhost/fake-blob-url';
+      global.URL.createObjectURL = vi.fn(() => mockBlobUrl);
+
       const onPlay = vi.fn();
       render(<MusicPlayer {...defaultProps} onPlay={onPlay} />);
 
@@ -126,7 +130,7 @@ describe('MusicPlayer', () => {
 
       fireEvent.change(fileInput, { target: { files: [file] } });
 
-      expect(onPlay).toHaveBeenCalledWith('relaxing.mp3');
+      expect(onPlay).toHaveBeenCalledWith(mockBlobUrl, 'relaxing.mp3');
     });
   });
 

@@ -83,7 +83,7 @@ export const ParticipantList: React.FC<ParticipantListProps> = ({
               aria-label={`Avatar: ${getAvatarCategory(participant.avatarId)}`}
               aria-hidden="false"
             >
-              {getAvatarEmoji(participant.avatarId)}
+              <img src={`/sprites/avatar_${participant.avatarId}.png`} alt="" style={{ width: '20px', height: '20px', imageRendering: 'pixelated' }} />
             </span>
 
             <span className="participant-name">{participant.displayName}</span>
@@ -104,8 +104,9 @@ export const ParticipantList: React.FC<ParticipantListProps> = ({
                 className="participant-locate-btn"
                 onClick={() => handleLocate(participant.sessionId)}
                 aria-label={`Localizar ${participant.displayName}`}
+                title="Localizar"
               >
-                Localizar
+                🛰️
               </button>
 
               <button
@@ -113,8 +114,9 @@ export const ParticipantList: React.FC<ParticipantListProps> = ({
                 className="participant-follow-btn"
                 onClick={() => handleFollow(participant.sessionId)}
                 aria-label={`Seguir ${participant.displayName}`}
+                title="Seguir"
               >
-                Seguir
+                🚀
               </button>
             </div>
           </li>
