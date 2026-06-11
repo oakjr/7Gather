@@ -90,7 +90,7 @@ export class GameScene extends Phaser.Scene {
       this.load.image(`avatar_${i}`, `/sprites/avatar_${i}.png`);
     }
     // Load logo for meeting room floor and sidebar
-    this.load.image('logo', '/logo.png');
+    //this.load.image('logo', '/logo.png');
   }
 
   /**
@@ -594,12 +594,18 @@ export class GameScene extends Phaser.Scene {
 
   /**
    * Apply or remove lock indicator for a zone based on its locked state.
+   * Also notifies the DoorAnimationSystem to keep locked doors closed.
    */
   private applyZoneLockState(zoneId: string, isLocked: boolean): void {
     if (isLocked) {
       this.showLockIndicator(zoneId);
     } else {
       this.removeLockIndicator(zoneId);
+    }
+
+    // Notify door animation system about lock state change
+    if (this.doorAnimationSystem) {
+      this.doorAnimationSystem.setZoneLocked(zoneId, isLocked);
     }
   }
 

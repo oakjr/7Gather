@@ -273,17 +273,8 @@ for (let y = tableY; y < tableY + tableH; y++) {
   }
 }
 
-// === MEETING ROOM CHAIRS: 8-16 chairs adjacent to table perimeter, ≥3 sides, avoid doorways ===
+// === MEETING ROOM CHAIRS: chairs on ALL sides of table (surrounding the entire table) ===
 const meetingChairPositions = [];
-const doorTileSet = new Set(meetingRoom.doorTiles.map(d => `${d.x},${d.y}`));
-// Also include tiles directly adjacent to doorways to avoid blocking
-const doorAdjacentSet = new Set();
-for (const dt of meetingRoom.doorTiles) {
-  doorAdjacentSet.add(`${dt.x},${dt.y}`);
-  for (const [dx, dy] of [[0,1],[0,-1],[1,0],[-1,0]]) {
-    doorAdjacentSet.add(`${dt.x+dx},${dt.y+dy}`);
-  }
-}
 
 // Generate candidate positions on each side of the table
 const sides = {
@@ -293,41 +284,39 @@ const sides = {
 // North side (row above table)
 for (let x = tableX; x < tableX + tableW; x++) {
   const pos = { x, y: tableY - 1 };
-  if (inBounds(pos.x, pos.y) && !doorAdjacentSet.has(`${pos.x},${pos.y}`)) {
+  if (inBounds(pos.x, pos.y)) {
     sides.north.push(pos);
   }
 }
 // South side (row below table)
 for (let x = tableX; x < tableX + tableW; x++) {
   const pos = { x, y: tableY + tableH };
-  if (inBounds(pos.x, pos.y) && !doorAdjacentSet.has(`${pos.x},${pos.y}`)) {
+  if (inBounds(pos.x, pos.y)) {
     sides.south.push(pos);
   }
 }
 // West side (column left of table)
 for (let y = tableY; y < tableY + tableH; y++) {
   const pos = { x: tableX - 1, y };
-  if (inBounds(pos.x, pos.y) && !doorAdjacentSet.has(`${pos.x},${pos.y}`)) {
+  if (inBounds(pos.x, pos.y)) {
     sides.west.push(pos);
   }
 }
 // East side (column right of table)
 for (let y = tableY; y < tableY + tableH; y++) {
   const pos = { x: tableX + tableW, y };
-  if (inBounds(pos.x, pos.y) && !doorAdjacentSet.has(`${pos.x},${pos.y}`)) {
+  if (inBounds(pos.x, pos.y)) {
     sides.east.push(pos);
   }
 }
 
-// Place chairs on at least 3 sides, total 8-16
-// Strategy: place on all 4 sides where possible
+// Place chairs on ALL 4 sides of the table
 let totalChairs = 0;
 const sidesUsed = [];
 for (const [sideName, candidates] of Object.entries(sides)) {
-  if (candidates.length > 0 && totalChairs < 16) {
+  if (candidates.length > 0) {
     sidesUsed.push(sideName);
     for (const pos of candidates) {
-      if (totalChairs >= 16) break;
       // Verify it's inside the meeting room interior
       if (pos.x >= meetingRoom.ix && pos.x < meetingRoom.ix + meetingRoom.w &&
           pos.y >= meetingRoom.iy && pos.y < meetingRoom.iy + meetingRoom.h) {
@@ -339,16 +328,11 @@ for (const [sideName, candidates] of Object.entries(sides)) {
   }
 }
 
-// Ensure at least 8 chairs (should already be met with 6-wide + 3-tall table)
-if (totalChairs < 8) {
-  console.warn(`Warning: Only ${totalChairs} meeting chairs placed (minimum 8 required)`);
-}
-
-// === DOOR TILES: closed doors at every 2-tile-wide doorway on ObjectsTiles layer ===
+// === DOOR TILES: open doors at every 2-tile-wide doorway on ObjectsTiles layer (open by default) ===
 const allDoorTiles = [];
 for (const room of rooms) {
   for (const dt of room.doorTiles) {
-    setObjectsTiles(dt.x, dt.y, TILE.CLOSED_DOOR);
+    setObjectsTiles(dt.x, dt.y, TILE.OPEN_DOOR);
     allDoorTiles.push(dt);
   }
 }
@@ -677,7 +661,7 @@ physics.forEach(t => {
 
 let doors = 0, chairs = 0, decoratives = 0;
 objectsTiles.forEach(t => {
-  if (t === gid(TILE.CLOSED_DOOR)) doors++;
+  if (t === gid(TILE.CLOSED_DOOR) || t === gid(TILE.OPEN_DOOR)) doors++;
   else if (t === gid(TILE.CHAIR)) chairs++;
   else if (t > 0) decoratives++;
 });
