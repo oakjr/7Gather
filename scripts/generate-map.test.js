@@ -23,6 +23,7 @@ const TILE_DESK = 12;
 const TILE_CHAIR = 13;
 const TILE_MEETING_TABLE = 14;
 const TILE_CLOSED_DOOR = 15;
+const TILE_OPEN_DOOR = 16;
 const TILE_SPACE_WINDOW = 17;
 const TILE_DECORATIVE_START = 18;
 
@@ -33,6 +34,7 @@ const VAL_DESK = TILE_DESK + FIRSTGID;       // 13
 const VAL_CHAIR = TILE_CHAIR + FIRSTGID;     // 14
 const VAL_MEETING_TABLE = TILE_MEETING_TABLE + FIRSTGID; // 15
 const VAL_CLOSED_DOOR = TILE_CLOSED_DOOR + FIRSTGID;    // 16
+const VAL_OPEN_DOOR = TILE_OPEN_DOOR + FIRSTGID;        // 17
 const VAL_SPACE_WINDOW = TILE_SPACE_WINDOW + FIRSTGID;  // 18
 const VAL_DECORATIVE_START = TILE_DECORATIVE_START + FIRSTGID; // 19
 
@@ -427,9 +429,8 @@ describe('Map Generator - Meeting Room Chairs (Req 7.1, 7.2)', () => {
       }
     }
 
-    // Should have 8-16 chairs
+    // Should have 8+ chairs (placed on all 4 sides of table)
     expect(meetingChairs.length).toBeGreaterThanOrEqual(8);
-    expect(meetingChairs.length).toBeLessThanOrEqual(16);
 
     // All chairs should be adjacent to the table perimeter
     for (const chair of meetingChairs) {
@@ -474,13 +475,13 @@ describe('Map Generator - Door Tiles (Req 12.3)', () => {
       const { tileX, tileY, tileW, tileH } = zoneToTiles(zone);
       const doorways = findDoorways(tileX, tileY, tileW, tileH);
 
-      // Each doorway tile should have a closed door tile on ObjectsTiles
+      // Each doorway tile should have an open door tile on ObjectsTiles (doors are open by default)
       for (const d of doorways) {
         const val = getTile(objectsTilesLayer, d.x, d.y);
         expect(
           val,
           `Door tile expected at (${d.x},${d.y}) for ${zone.name}, got value ${val}`
-        ).toBe(VAL_CLOSED_DOOR);
+        ).toBe(VAL_OPEN_DOOR);
         totalDoorTiles++;
       }
     }

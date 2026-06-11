@@ -110,7 +110,7 @@ export class SpatialRoom extends Room<RoomState> {
     }
 
     // Initialize ZoneStateSchema entries for all loaded zones
-    for (const [zoneId, bounds] of this.zoneBounds.entries()) {
+    for (const [zoneId, _bounds] of this.zoneBounds.entries()) {
       const zoneState = new ZoneStateSchema();
       zoneState.zoneId = zoneId;
       zoneState.isLocked = false;

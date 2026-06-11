@@ -51,6 +51,8 @@ export class TiledMapManager {
   private privateZones: PrivateZone[] = [];
   private doorTiles: DoorTile[] = [];
   private mapJson: TiledJSON | null = null;
+  /** Set of locked door tile positions (key: "x,y") that block movement */
+  private lockedDoorPositions: Set<string> = new Set();
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
@@ -99,9 +101,9 @@ export class TiledMapManager {
     }
     topLayer.setDepth(5);
 
-    // Set collision on Physics layer for wall tiles only (tile 3)
-    // Tile 11 (private zones) should be walkable
-    physicsLayer.setCollisionByExclusion([-1, 0, 11]);
+    // Set collision on Physics layer for wall tiles only
+    // Exclude: -1 (empty), 0 (no tile), 11 (zone detect local id), 12 (zone detect GID)
+    physicsLayer.setCollisionByExclusion([-1, 0, 11, 12]);
 
     // Set collision on ObjectsTiles layer for tiles with collide: true property
     if (objectsTileLayer) {
@@ -137,6 +139,7 @@ export class TiledMapManager {
   /**
    * Check if a world position (in pixels) collides with the Physics layer or ObjectsTiles layer.
    * Uses the "collide" property set on tiles in both layers.
+   * Also checks locked door positions.
    *
    * @param x - X position in pixels
    * @param y - Y position in pixels
@@ -152,6 +155,11 @@ export class TiledMapManager {
 
     if (tileX === null || tileY === null) {
       return true; // Out of bounds is treated as collision
+    }
+
+    // Check locked door positions (closed doors of locked zones block movement)
+    if (this.lockedDoorPositions.has(`${tileX},${tileY}`)) {
+      return true;
     }
 
     // Check Physics layer
@@ -258,6 +266,20 @@ export class TiledMapManager {
     // putTileAt uses the GID directly
     this.objectsTileLayer.putTileAt(newIndex, tileX, tileY);
     door.isOpen = open;
+  }
+
+  /**
+   * Mark a door position as locked (blocks movement via isColliding).
+   */
+  setLockedDoor(tileX: number, tileY: number): void {
+    this.lockedDoorPositions.add(`${tileX},${tileY}`);
+  }
+
+  /**
+   * Remove a door position from the locked set (allows movement again).
+   */
+  clearLockedDoor(tileX: number, tileY: number): void {
+    this.lockedDoorPositions.delete(`${tileX},${tileY}`);
   }
 
   /**
@@ -424,7 +446,9 @@ export class TiledMapManager {
    * and matching positions with Objects layer zone definitions.
    */
   private detectPrivateZones(tilemap: Phaser.Tilemaps.Tilemap): PrivateZone[] {
-    const ZONE_TILE_INDEX = 11; // gid 11 = private zone floor
+    // Zone detect tile: tileset index 11, GID 12 (firstgid=1)
+    // Phaser may store tile.index as raw GID (12) or normalized (11) depending on version
+    const ZONE_TILE_INDICES = [11, 12];
     const zoneMap = new Map<string, Phaser.Math.Vector2[]>();
 
     // Get zone definitions from the Objects layer
@@ -453,7 +477,7 @@ export class TiledMapManager {
       for (let y = 0; y < layer.height; y++) {
         for (let x = 0; x < layer.width; x++) {
           const tile = layer.data[y][x];
-          if (!tile || tile.index !== ZONE_TILE_INDEX) continue;
+          if (!tile || !ZONE_TILE_INDICES.includes(tile.index)) continue;
 
           // Find which zone object contains this tile
           let zoneName = '';
