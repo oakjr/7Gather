@@ -1,4 +1,4 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useState } from 'react';
 
 /** Information about a participant in the room. */
 export interface ParticipantInfo {
@@ -7,12 +7,16 @@ export interface ParticipantInfo {
   avatarId: number;
   /** Empty string if in general area, zone ID if in a private zone. */
   currentZone: string;
+  /** Whether the participant is currently connected. Defaults to true if not provided. */
+  isConnected?: boolean;
 }
 
 export interface ParticipantListProps {
   participants: ParticipantInfo[];
+  currentUserSessionId?: string;
   onLocate: (sessionId: string) => void;
   onFollow: (sessionId: string) => void;
+  onPoke?: (sessionId: string) => void;
 }
 
 /** Returns an emoji representing the avatar category based on ID. */
@@ -40,9 +44,13 @@ function getAvatarCategory(avatarId: number): string {
  */
 export const ParticipantList: React.FC<ParticipantListProps> = ({
   participants,
+  currentUserSessionId,
   onLocate,
   onFollow,
+  onPoke,
 }) => {
+  const [pokeErrors, setPokeErrors] = useState<Record<string, string>>({});
+
   const handleLocate = useCallback(
     (sessionId: string) => {
       onLocate(sessionId);
@@ -55,6 +63,26 @@ export const ParticipantList: React.FC<ParticipantListProps> = ({
       onFollow(sessionId);
     },
     [onFollow]
+  );
+
+  const handlePoke = useCallback(
+    (participant: ParticipantInfo) => {
+      const isConnected = participant.isConnected !== false;
+      if (!isConnected) {
+        setPokeErrors((prev) => ({
+          ...prev,
+          [participant.sessionId]: 'Participante indisponível',
+        }));
+        return;
+      }
+      setPokeErrors((prev) => {
+        const next = { ...prev };
+        delete next[participant.sessionId];
+        return next;
+      });
+      onPoke?.(participant.sessionId);
+    },
+    [onPoke]
   );
 
   return (
@@ -118,7 +146,29 @@ export const ParticipantList: React.FC<ParticipantListProps> = ({
               >
                 🚀
               </button>
+
+              {onPoke && participant.sessionId !== currentUserSessionId && (
+                <button
+                  type="button"
+                  className="participant-poke-btn"
+                  onClick={() => handlePoke(participant)}
+                  aria-label={`Chamar ${participant.displayName}`}
+                  title="Chamar"
+                >
+                  👉
+                </button>
+              )}
             </div>
+
+            {pokeErrors[participant.sessionId] && (
+              <span
+                className="participant-poke-error"
+                role="alert"
+                aria-live="assertive"
+              >
+                {pokeErrors[participant.sessionId]}
+              </span>
+            )}
           </li>
         ))}
       </ul>

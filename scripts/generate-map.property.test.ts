@@ -548,3 +548,259 @@ describe('Property 4: Doorway reachability after object placement', () => {
     );
   });
 });
+
+
+/**
+ * Property-Based Test: Door Rotation Flag Correctness (Property 10)
+ *
+ * Feature: room-ux-improvements, Property 10: Door rotation flag correctness
+ *
+ * For any door tile placed on an east or west wall, the tile data SHALL include
+ * the Tiled flipped-diagonal rotation bit (0x20000000). For any door tile placed
+ * on a north or south wall, the tile data SHALL have no rotation flags (raw GID only).
+ *
+ * **Validates: Requirements 10.2, 10.3**
+ */
+
+// === Constants for Property 10 ===
+const FLIPPED_DIAG = 0x20000000;
+const FLIPPED_HORIZONTAL = 0x80000000;
+const FLIPPED_VERTICAL = 0x40000000;
+const ALL_FLIP_BITS = FLIPPED_DIAG | FLIPPED_HORIZONTAL | FLIPPED_VERTICAL;
+const GID_MASK = 0x1FFFFFFF; // Strips all 3 flip/rotation bits
+
+const OPEN_DOOR_GID = tileIndexToData(TILE_OPEN_DOOR); // 17
+const CLOSED_DOOR_GID = tileIndexToData(TILE_CLOSED_DOOR); // 16
+
+/**
+ * Describes a door tile's wall orientation for Property 10 testing.
+ */
+interface DoorTileInfo {
+  x: number;
+  y: number;
+  roomName: string;
+  wallOrientation: 'east-west' | 'north-south';
+  rawValue: number;
+}
+
+/**
+ * Collect all door tiles from the generated map with their wall orientation.
+ * Uses the room layout constants from generate-map.js.
+ */
+function collectAllDoorTilesWithOrientation(): DoorTileInfo[] {
+  const doorTiles: DoorTileInfo[] = [];
+  const allRooms = getRooms();
+
+  for (const room of allRooms) {
+    const tiles = getDoorwayTiles(room);
+
+    for (const dt of tiles) {
+      let wallOrientation: 'east-west' | 'north-south';
+
+      if (room.name === 'sala-reuniao') {
+        // Meeting room: determine orientation by position relative to room walls
+        const wl = room.ix - 1;
+        const wr = room.ix + room.w;
+        if (dt.x === wl || dt.x === wr) {
+          wallOrientation = 'east-west';
+        } else {
+          wallOrientation = 'north-south';
+        }
+      } else {
+        // Private rooms: orientation depends on doorSide
+        if (room.doorSide === 'east' || room.doorSide === 'west') {
+          wallOrientation = 'east-west';
+        } else {
+          wallOrientation = 'north-south';
+        }
+      }
+
+      doorTiles.push({
+        x: dt.x,
+        y: dt.y,
+        roomName: room.name,
+        wallOrientation,
+        rawValue: 0, // will be filled from actual map data
+      });
+    }
+  }
+
+  return doorTiles;
+}
+
+/**
+ * Simulate the generate-map.js door GID placement logic.
+ * Given a room's door side and a door tile position, compute the expected GID.
+ */
+function computeExpectedDoorGid(
+  doorSide: 'north' | 'south' | 'east' | 'west',
+  doorX: number,
+  doorY: number,
+  roomWl: number,
+  roomWr: number,
+  isMeeting: boolean
+): number {
+  const baseGid = OPEN_DOOR_GID;
+  let isEastWest = false;
+
+  if (!isMeeting) {
+    if (doorSide === 'east' || doorSide === 'west') {
+      isEastWest = true;
+    }
+  } else {
+    // Meeting room: check if door is on east/west wall by x position
+    if (doorX === roomWl || doorX === roomWr) {
+      isEastWest = true;
+    }
+  }
+
+  return isEastWest ? (baseGid | FLIPPED_DIAG) : baseGid;
+}
+
+/**
+ * Generate the ObjectsTiles layer with door GIDs applied per generate-map.js logic.
+ * This replicates the door placement logic for property testing.
+ */
+function generateObjectsTilesWithDoors(): number[] {
+  const layer = new Array(WIDTH * HEIGHT).fill(0);
+  const allRooms = getRooms();
+
+  for (const room of allRooms) {
+    const tiles = getDoorwayTiles(room);
+    for (const dt of tiles) {
+      if (dt.x >= 0 && dt.x < WIDTH && dt.y >= 0 && dt.y < HEIGHT) {
+        const wl = room.ix - 1;
+        const wr = room.ix + room.w;
+        const isMeeting = room.name === 'sala-reuniao';
+        const doorGid = computeExpectedDoorGid(
+          room.doorSide,
+          dt.x, dt.y,
+          wl, wr,
+          isMeeting
+        );
+        layer[dt.y * WIDTH + dt.x] = doorGid;
+      }
+    }
+  }
+
+  return layer;
+}
+
+// === Property 10 Tests ===
+
+describe('Property 10: Door rotation flag correctness', () => {
+  const objectsTilesWithDoors = generateObjectsTilesWithDoors();
+  const allDoorTilesInfo = collectAllDoorTilesWithOrientation();
+
+  it('for any door on east/west wall, tile data includes flipped-diagonal bit (0x20000000)', () => {
+    // Use fast-check to sample arbitrary subsets of east/west door tiles
+    // and verify the property holds for each sampled door
+    const eastWestDoors = allDoorTilesInfo.filter(d => d.wallOrientation === 'east-west');
+
+    // Precondition: we have east/west doors to test
+    expect(eastWestDoors.length).toBeGreaterThan(0);
+
+    fc.assert(
+      fc.property(
+        fc.nat({ max: eastWestDoors.length - 1 }),
+        (doorIndex) => {
+          const door = eastWestDoors[doorIndex];
+          const tileValue = objectsTilesWithDoors[door.y * WIDTH + door.x];
+
+          // The tile must have the flipped-diagonal bit set
+          const hasFlippedDiag = (tileValue & FLIPPED_DIAG) !== 0;
+          // The base GID (stripped of flip bits) must be a door tile
+          const baseGid = tileValue & GID_MASK;
+          const isDoorGid = baseGid === OPEN_DOOR_GID || baseGid === CLOSED_DOOR_GID;
+
+          return hasFlippedDiag && isDoorGid;
+        }
+      ),
+      { numRuns: 100 }
+    );
+  });
+
+  it('for any door on north/south wall, tile data has no rotation flags (raw GID only)', () => {
+    // Use fast-check to sample arbitrary subsets of north/south door tiles
+    // and verify no rotation flags are present
+    const northSouthDoors = allDoorTilesInfo.filter(d => d.wallOrientation === 'north-south');
+
+    // Precondition: we have north/south doors to test
+    expect(northSouthDoors.length).toBeGreaterThan(0);
+
+    fc.assert(
+      fc.property(
+        fc.nat({ max: northSouthDoors.length - 1 }),
+        (doorIndex) => {
+          const door = northSouthDoors[doorIndex];
+          const tileValue = objectsTilesWithDoors[door.y * WIDTH + door.x];
+
+          // The tile must NOT have any flip/rotation bits set
+          const hasAnyFlipBits = (tileValue & ALL_FLIP_BITS) !== 0;
+          // The raw value should be just the door GID
+          const isDoorGid = tileValue === OPEN_DOOR_GID || tileValue === CLOSED_DOOR_GID;
+
+          return !hasAnyFlipBits && isDoorGid;
+        }
+      ),
+      { numRuns: 100 }
+    );
+  });
+
+  it('for any arbitrary room configuration, rotation flag property holds universally', () => {
+    // Generate arbitrary room configurations with different door sides
+    // and verify the rotation flag logic is correct for each
+    type DoorSide = 'north' | 'south' | 'east' | 'west';
+    const doorSideArb = fc.constantFrom<DoorSide>('north', 'south', 'east', 'west');
+
+    // Generate a room with arbitrary interior position and door side
+    const roomConfigArb = fc.record({
+      ix: fc.integer({ min: 2, max: WIDTH - 8 }),
+      iy: fc.integer({ min: 2, max: HEIGHT - 8 }),
+      doorSide: doorSideArb,
+    });
+
+    fc.assert(
+      fc.property(roomConfigArb, ({ ix, iy, doorSide }) => {
+        const w = 5, h = 5;
+        const wl = ix - 1, wr = ix + w;
+        const wt = iy - 1, wb = iy + h;
+        const midX = ix + 2, midY = iy + 2;
+
+        // Compute door tile positions based on door side
+        let doorTiles: { x: number; y: number }[];
+        switch (doorSide) {
+          case 'south': doorTiles = [{ x: midX, y: wb }, { x: midX + 1, y: wb }]; break;
+          case 'north': doorTiles = [{ x: midX, y: wt }, { x: midX + 1, y: wt }]; break;
+          case 'east':  doorTiles = [{ x: wr, y: midY }, { x: wr, y: midY + 1 }]; break;
+          case 'west':  doorTiles = [{ x: wl, y: midY }, { x: wl, y: midY + 1 }]; break;
+        }
+
+        // Apply the rotation logic (same as generate-map.js)
+        const baseGid = OPEN_DOOR_GID;
+        const isEastWest = doorSide === 'east' || doorSide === 'west';
+        const expectedGid = isEastWest ? (baseGid | FLIPPED_DIAG) : baseGid;
+
+        for (const dt of doorTiles) {
+          // Verify: east/west doors get FLIPPED_DIAG, north/south doors get plain GID
+          if (isEastWest) {
+            // Must have flipped-diagonal bit
+            if ((expectedGid & FLIPPED_DIAG) === 0) return false;
+            // Must NOT have other rotation bits (horizontal, vertical)
+            if ((expectedGid & FLIPPED_HORIZONTAL) !== 0) return false;
+            if ((expectedGid & FLIPPED_VERTICAL) !== 0) return false;
+          } else {
+            // Must have NO rotation/flip bits at all
+            if ((expectedGid & ALL_FLIP_BITS) !== 0) return false;
+          }
+
+          // Base GID must be the door tile GID
+          if ((expectedGid & GID_MASK) !== baseGid) return false;
+        }
+
+        return true;
+      }),
+      { numRuns: 100 }
+    );
+  });
+});

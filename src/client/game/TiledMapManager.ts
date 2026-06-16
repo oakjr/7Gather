@@ -46,6 +46,7 @@ export interface TiledMapConfig {
 export class TiledMapManager {
   private scene: Phaser.Scene;
   private tilemap: Phaser.Tilemaps.Tilemap | null = null;
+  private groundLayer: Phaser.Tilemaps.TilemapLayer | null = null;
   private physicsLayer: Phaser.Tilemaps.TilemapLayer | null = null;
   private objectsTileLayer: Phaser.Tilemaps.TilemapLayer | null = null;
   private privateZones: PrivateZone[] = [];
@@ -111,6 +112,7 @@ export class TiledMapManager {
     }
 
     this.tilemap = tilemap;
+    this.groundLayer = groundLayer;
     this.physicsLayer = physicsLayer;
     this.objectsTileLayer = objectsTileLayer;
 
@@ -411,13 +413,20 @@ export class TiledMapManager {
       return [];
     }
 
+    // Tiled flip/rotation bits occupy the top 3 bits of the GID (bits 29-31).
+    // Strip them to get the base tile index for comparison.
+    const GID_MASK = 0x1FFFFFFF;
+
     for (let y = 0; y < layer.height; y++) {
       for (let x = 0; x < layer.width; x++) {
         const tile = layer.data[y][x];
         if (!tile || tile.index === -1) continue;
 
-        // Check if this tile's index matches a door tile (closed or open)
-        if (tile.index === closedIndex) {
+        // Strip flip bits when comparing tile indices (rotation flags from Tiled data)
+        const baseIndex = tile.index & GID_MASK;
+
+        // Check if this tile's base index matches a door tile (closed or open)
+        if (baseIndex === closedIndex) {
           doors.push({
             tileX: x,
             tileY: y,
@@ -425,7 +434,7 @@ export class TiledMapManager {
             openIndex,
             isOpen: false,
           });
-        } else if (tile.index === openIndex) {
+        } else if (baseIndex === openIndex) {
           doors.push({
             tileX: x,
             tileY: y,
@@ -531,9 +540,14 @@ export class TiledMapManager {
    * @param color - Hex color number to apply as tint (e.g., 0x2D1B69)
    */
   applyFloorTint(zone: PrivateZone, color: number): void {
-    if (!this.tilemap || !this.physicsLayer) return;
+    if (!this.tilemap || !this.groundLayer) return;
 
-    const ZONE_FLOOR_TILE_INDEX = 10;
+    // Zone floor tile: tileset local id 10, GID = firstgid + 10
+    // Phaser's tile.index stores the GID value from the layer data
+    const ZONE_FLOOR_LOCAL_ID = 10;
+    const firstgid = this.mapJson?.tilesets?.[0]?.firstgid ?? 1;
+    const zoneFloorGid = firstgid + ZONE_FLOOR_LOCAL_ID;
+
     const bounds = zone.bounds;
 
     const startTileX = Math.floor(bounds.x / TILE_SIZE);
@@ -543,8 +557,8 @@ export class TiledMapManager {
 
     for (let y = startTileY; y < endTileY; y++) {
       for (let x = startTileX; x < endTileX; x++) {
-        const tile = this.physicsLayer.getTileAt(x, y);
-        if (tile && tile.index === ZONE_FLOOR_TILE_INDEX) {
+        const tile = this.groundLayer.getTileAt(x, y);
+        if (tile && tile.index === zoneFloorGid) {
           tile.tint = color;
         }
       }

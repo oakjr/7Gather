@@ -81,6 +81,7 @@ vi.mock("livekit-client", () => {
     Room: vi.fn().mockImplementation(() => createMockRoom()),
     RoomEvent: {
       TrackSubscribed: "trackSubscribed",
+      TrackUnsubscribed: "trackUnsubscribed",
       ConnectionStateChanged: "connectionStateChanged",
       Disconnected: "disconnected",
       Reconnecting: "reconnecting",

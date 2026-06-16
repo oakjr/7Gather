@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import { MAX_AVATARS } from '@shared/constants';
 import { setAvatarId, getAvatarId } from '../avatarStorage';
 
@@ -24,9 +24,21 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({ currentName, current
   const [name, setName] = useState(currentName);
   const [selectedAvatar, setSelectedAvatar] = useState(currentAvatarId);
 
+  // Refs to capture form values when the panel is opened
+  const initialNameRef = useRef(currentName);
+  const initialAvatarIdRef = useRef(currentAvatarId);
+
   const handleToggle = useCallback(() => {
-    setIsOpen(prev => !prev);
-  }, []);
+    setIsOpen(prev => {
+      const willOpen = !prev;
+      if (willOpen) {
+        // Capture initial values when panel opens
+        initialNameRef.current = currentName;
+        initialAvatarIdRef.current = currentAvatarId;
+      }
+      return willOpen;
+    });
+  }, [currentName, currentAvatarId]);
 
   const handleSave = useCallback(() => {
     const trimmedName = name.trim();
@@ -39,7 +51,13 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({ currentName, current
     window.location.reload();
   }, [name, selectedAvatar]);
 
-  const hasChanges = name.trim() !== currentName || selectedAvatar !== currentAvatarId;
+  const handleCancel = useCallback(() => {
+    setName(initialNameRef.current);
+    setSelectedAvatar(initialAvatarIdRef.current);
+    setIsOpen(false);
+  }, []);
+
+  const hasChanges = name.trim() !== initialNameRef.current || selectedAvatar !== initialAvatarIdRef.current;
   const isValid = name.trim().length >= 2;
 
   return (
@@ -137,25 +155,49 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({ currentName, current
             ))}
           </div>
 
-          {/* Save button */}
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={!hasChanges || !isValid}
-            style={{
-              width: '100%',
-              padding: '8px',
-              borderRadius: '6px',
-              border: 'none',
-              background: hasChanges && isValid ? '#4fc3f7' : '#555',
-              color: hasChanges && isValid ? '#000' : '#888',
-              fontWeight: 'bold',
-              cursor: hasChanges && isValid ? 'pointer' : 'not-allowed',
-              fontSize: '13px',
-            }}
-          >
-            {hasChanges ? 'Salvar e Reentrar' : 'Sem alterações'}
-          </button>
+          {/* Button row */}
+          <div style={{ display: 'flex', gap: '8px' }}>
+            {/* Cancel button */}
+            <button
+              type="button"
+              onClick={handleCancel}
+              disabled={!hasChanges}
+              style={{
+                flex: 1,
+                padding: '8px',
+                borderRadius: '6px',
+                border: '1px solid #555',
+                background: '#2a2a3e',
+                color: hasChanges ? '#fff' : '#888',
+                fontWeight: 'bold',
+                cursor: hasChanges ? 'pointer' : 'not-allowed',
+                fontSize: '13px',
+                opacity: hasChanges ? 1 : 0.5,
+              }}
+            >
+              Cancelar
+            </button>
+
+            {/* Save button */}
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={!hasChanges || !isValid}
+              style={{
+                flex: 1,
+                padding: '8px',
+                borderRadius: '6px',
+                border: 'none',
+                background: hasChanges && isValid ? '#4fc3f7' : '#555',
+                color: hasChanges && isValid ? '#000' : '#888',
+                fontWeight: 'bold',
+                cursor: hasChanges && isValid ? 'pointer' : 'not-allowed',
+                fontSize: '13px',
+              }}
+            >
+              {hasChanges ? 'Salvar e Reentrar' : 'Sem alterações'}
+            </button>
+          </div>
         </div>
       )}
     </div>

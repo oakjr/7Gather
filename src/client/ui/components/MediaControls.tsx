@@ -70,7 +70,7 @@ export const MediaControls: React.FC<MediaControlsProps> = ({
       {/* Mute/Unmute Button */}
       <button
         type="button"
-        className={`media-btn media-btn--mic${isMuted ? ' media-btn--off' : ' media-btn--on'}`}
+        className={`media-btn media-btn--mic${isMicDenied ? ' media-btn--disabled' : isMuted ? ' media-btn--off' : ' media-btn--on'}`}
         onClick={handleToggleMute}
         disabled={isMicDenied}
         aria-pressed={!isMuted}
@@ -100,7 +100,7 @@ export const MediaControls: React.FC<MediaControlsProps> = ({
       {/* Video On/Off Button */}
       <button
         type="button"
-        className={`media-btn media-btn--video${isVideoOn ? ' media-btn--on' : ' media-btn--off'}`}
+        className={`media-btn media-btn--video${isCameraDenied ? ' media-btn--disabled' : isVideoOn ? ' media-btn--on' : ' media-btn--off'}`}
         onClick={handleToggleVideo}
         disabled={isCameraDenied}
         aria-pressed={isVideoOn}

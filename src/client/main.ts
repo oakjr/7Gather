@@ -31,6 +31,8 @@ import { SettingsMenu } from './ui/components/SettingsMenu';
 import { CollapsibleSection } from './ui/components/CollapsibleSection';
 import { PadlockIcon } from './ui/components/PadlockIcon';
 import { FloorColorPicker } from './ui/components/FloorColorPicker';
+import { ScreenShareOverlay } from './ui/components/ScreenShareOverlay';
+import { CallNotification, CallInfo } from './ui/components/CallNotification';
 import { Direction } from '../shared/types';
 
 // === Configuration from environment or defaults ===
@@ -142,8 +144,49 @@ class App {
     // Set up map version monitoring for hot-reload
     this.setupMapVersionMonitor();
 
+    // Set local player's initial status from localStorage (Requirement 5.5)
+    this.applyInitialLocalStatus();
+
     // Render in-game overlay UI (media controls, participant list, etc.)
     this.renderGameOverlayUI(config);
+  }
+
+  /**
+   * Apply the initial local player status from localStorage to the avatar indicator.
+   * Also sends set_status to the server so other clients see the persisted status.
+   */
+  private applyInitialLocalStatus(): void {
+    const VALID_STATUSES = ['available', 'busy', 'dnd'];
+    let status = 'available';
+    try {
+      const stored = localStorage.getItem('user_status');
+      if (stored && VALID_STATUSES.includes(stored)) {
+        status = stored;
+      }
+    } catch {
+      // localStorage unavailable
+    }
+
+    // Send to server so other clients see our status
+    const room = this.colyseusClient.getRoom();
+    if (room) {
+      room.send('set_status', { status });
+    }
+
+    // Update local avatar indicator once game scene is available
+    if (this.gameScene) {
+      this.gameScene.setLocalPlayerStatus(status);
+    } else {
+      // Game scene may not be ready yet (it's ready after 'ready' event)
+      // We'll set it once the game scene is available via the game.events.on('ready') handler
+      const checkScene = () => {
+        if (this.gameScene) {
+          this.gameScene.setLocalPlayerStatus(status);
+        }
+      };
+      // Give Phaser a frame to initialize
+      setTimeout(checkScene, 100);
+    }
   }
 
   /**
@@ -199,6 +242,11 @@ class App {
     this.game.events.on('ready', () => {
       this.gameScene = this.game!.scene.getScene('GameScene') as GameScene;
       this.bindSceneEvents();
+
+      // Bind room state for initial zone lock/floor color state (Requirement 7.10)
+      // This ensures Lock_Indicators and locked-door collision state are applied
+      // before the first user-movable frame on join/reconnect.
+      this.bindRoomStateToGameScene();
     });
   }
 
@@ -264,6 +312,11 @@ class App {
         player.displayName
       );
 
+      // Set initial status for the remote player
+      if (player.status) {
+        this.gameScene.setRemotePlayerStatus(player.sessionId, player.status);
+      }
+
       // Listen for changes to this player's state
       player.onChange(() => {
         if (!this.gameScene) return;
@@ -275,6 +328,7 @@ class App {
           player.isMoving
         );
         this.gameScene.setRemotePlayerMuted(player.sessionId, player.isMuted);
+        this.gameScene.setRemotePlayerStatus(player.sessionId, player.status);
       });
     });
 
@@ -284,10 +338,36 @@ class App {
       this.gameScene.removeRemotePlayer(sessionId);
     });
 
-    // Connection state change → update UI
+    // Connection state change → update UI and re-bind on reconnect
     this.colyseusClient.onConnectionStateChange((state) => {
       console.log('[App] Connection state:', state);
+      // On reconnect, re-bind room state to apply initial zone lock/floor states
+      if (state === 'connected' && this.roomStateBound) {
+        this.roomStateBound = false;
+        this.bindRoomStateToGameScene();
+      }
     });
+
+    // Bind room state for zone lock indicators and floor colors (Requirement 7.10)
+    // This must happen before the first user-movable frame so initial locked zones
+    // render Lock_Indicators and apply locked-door collision state immediately.
+    this.bindRoomStateToGameScene();
+  }
+
+  /**
+   * Binds the Colyseus room state zones to the GameScene for lock indicators and floor colors.
+   * If the gameScene is not yet ready, defers until it becomes available.
+   * Requirement 7.10: Process initial locked zone state before first user-movable frame.
+   */
+  private roomStateBound = false;
+  private bindRoomStateToGameScene(): void {
+    if (this.roomStateBound) return;
+
+    const room = this.colyseusClient.getRoom();
+    if (!room || !this.gameScene) return;
+
+    this.gameScene.bindRoomState(room);
+    this.roomStateBound = true;
   }
 
   /**
@@ -403,12 +483,62 @@ const GameOverlay: React.FC<GameOverlayProps> = ({
   const [homeRoom, setHomeRoom] = React.useState<HomeRoomData | null>(getMyHomeRoom());
   const [isRoomLocked, setIsRoomLocked] = React.useState(false);
   const [floorColorIndex, setFloorColorIndex] = React.useState<number | null>(null);
+  const [screenShareStream, setScreenShareStream] = React.useState<MediaStream | null>(null);
+  const [screenSharerName, setScreenSharerName] = React.useState<string>('');
+  const [calls, setCalls] = React.useState<CallInfo[]>([]);
 
   // Listen for zone changes via global event bus
   React.useEffect(() => {
     const unsub = onZoneChange((zoneId) => setCurrentZoneId(zoneId));
     return unsub;
   }, []);
+
+  // Listen for remote screen share track subscribe/unsubscribe events
+  React.useEffect(() => {
+    livekitClient.onTrackSubscribed((track, publication, participant) => {
+      if (publication.source === 'screen_share' && track.kind === 'video') {
+        const mediaStream = new MediaStream([track.mediaStreamTrack]);
+        setScreenShareStream(mediaStream);
+        setScreenSharerName(participant.name || participant.identity || 'Participante');
+      }
+    });
+
+    livekitClient.onTrackUnsubscribed((track, publication) => {
+      if (publication.source === 'screen_share' && track.kind === 'video') {
+        setScreenShareStream(null);
+        setScreenSharerName('');
+      }
+    });
+  }, [livekitClient]);
+
+  // Listen for call_notification and call_expired messages from Colyseus
+  React.useEffect(() => {
+    const room = colyseusClient.getRoom();
+    if (!room) return;
+
+    const handleCallNotification = (message: { callerSessionId: string; callerName: string; timestamp: number }) => {
+      const newCall: CallInfo = {
+        callerId: message.callerSessionId,
+        callerName: message.callerName,
+        timestamp: message.timestamp,
+        callerLeft: false,
+      };
+      setCalls((prev) => [...prev, newCall]);
+    };
+
+    const handleCallExpired = (message: { callerSessionId: string }) => {
+      setCalls((prev) =>
+        prev.map((call) =>
+          call.callerId === message.callerSessionId
+            ? { ...call, callerLeft: true }
+            : call
+        )
+      );
+    };
+
+    room.onMessage('call_notification', handleCallNotification);
+    room.onMessage('call_expired', handleCallExpired);
+  }, [colyseusClient]);
 
   // Listen for zone state changes from Colyseus (lock state, floor color)
   React.useEffect(() => {
@@ -474,6 +604,21 @@ const GameOverlay: React.FC<GameOverlayProps> = ({
     gameScene?.startFollow(sessionId);
   };
 
+  const handleCallGo = (callerId: string) => {
+    const room = colyseusClient.getRoom();
+    if (!room || !gameScene) return;
+
+    // Look up the caller's current position from room state
+    const callerPlayer = room.state.players.get(callerId);
+    if (callerPlayer) {
+      gameScene.navigateTo(callerPlayer.x, callerPlayer.y);
+    }
+  };
+
+  const handleCallDismiss = (callerId: string) => {
+    setCalls((prev) => prev.filter((call) => call.callerId !== callerId));
+  };
+
   const handlePlay = (source: string, displayName?: string) => {
     livekitClient.publishMusicTrack(source)
       .then(() => {
@@ -510,6 +655,21 @@ const GameOverlay: React.FC<GameOverlayProps> = ({
   };
 
   return React.createElement('div', { className: 'game-overlay-inner' },
+    // Screen share overlay (renders when a remote participant is sharing)
+    React.createElement(ScreenShareOverlay, {
+      stream: screenShareStream,
+      sharerName: screenSharerName,
+      onClose: () => {
+        setScreenShareStream(null);
+        setScreenSharerName('');
+      },
+    }),
+    // Call notifications (top-right toasts)
+    React.createElement(CallNotification, {
+      calls,
+      onGo: handleCallGo,
+      onDismiss: handleCallDismiss,
+    }),
     // Sidebar toggle button (always visible)
     React.createElement('button', {
       className: `sidebar-toggle-btn${sidebarCollapsed ? '' : ' sidebar-open'}`,
@@ -531,7 +691,16 @@ const GameOverlay: React.FC<GameOverlayProps> = ({
       }, allSectionsState === false ? '💥 Expandir Tudo' : '🕳️ Colapsar Tudo'),
       // Status section
       React.createElement(CollapsibleSection, { title: '🟢 Status', defaultOpen: false, forceState: allSectionsState },
-        React.createElement(StatusSelector, { initialStatus: 'available' })
+        React.createElement(StatusSelector, {
+          initialStatus: 'available',
+          onStatusChange: (status: string) => {
+            const room = colyseusClient.getRoom();
+            if (room) {
+              room.send('set_status', { status });
+            }
+            gameScene?.setLocalPlayerStatus(status);
+          },
+        })
       ),
       // Participants section
       React.createElement(CollapsibleSection, { title: '👥 Participantes', defaultOpen: false, forceState: allSectionsState },

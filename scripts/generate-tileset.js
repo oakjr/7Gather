@@ -332,35 +332,29 @@ function generateMeetingTable(col, row) {
   drawRect(col, row, 0, 15, 32, 2, ar, ag, ab);
 }
 
-// Tile 15: Closed door (two panels meeting at center)
+// Tile 15: Closed door (single panel filling full 32×32 tile)
 function generateClosedDoor(col, row) {
   const [br, bg, bb] = PALETTE.doorFrame;
   fillTile(col, row, br, bg, bb);
 
   const [pr, pg, pb] = PALETTE.doorPanel;
   const [ar, ag, ab] = PALETTE.doorAccent;
-  const [gr, gg, gb] = PALETTE.doorGap;
 
-  // Left panel
-  drawRect(col, row, 2, 2, 13, 28, pr, pg, pb);
-  // Right panel
-  drawRect(col, row, 17, 2, 13, 28, pr, pg, pb);
+  // Single panel filling the tile (with frame border)
+  drawRect(col, row, 2, 2, 28, 28, pr, pg, pb);
 
-  // Center gap (where panels meet)
-  drawRect(col, row, 15, 2, 2, 28, gr, gg, gb);
+  // Panel detail lines (vertical accents)
+  drawRect(col, row, 8, 4, 1, 24, ar, ag, ab);
+  drawRect(col, row, 23, 4, 1, 24, ar, ag, ab);
 
-  // Panel detail lines
-  drawRect(col, row, 5, 4, 1, 24, ar, ag, ab);
-  drawRect(col, row, 26, 4, 1, 24, ar, ag, ab);
-
-  // Handle dots
-  setTilePixel(col, row, 13, 15, ar, ag, ab);
-  setTilePixel(col, row, 13, 16, ar, ag, ab);
-  setTilePixel(col, row, 18, 15, ar, ag, ab);
-  setTilePixel(col, row, 18, 16, ar, ag, ab);
+  // Handle on right side of panel
+  setTilePixel(col, row, 25, 15, ar, ag, ab);
+  setTilePixel(col, row, 25, 16, ar, ag, ab);
+  setTilePixel(col, row, 26, 15, ar, ag, ab);
+  setTilePixel(col, row, 26, 16, ar, ag, ab);
 }
 
-// Tile 16: Open door (panels retracted to edges)
+// Tile 16: Open door (single panel retracted to left edge, open space right)
 function generateOpenDoor(col, row) {
   const [br, bg, bb] = PALETTE.doorFrame;
   fillTile(col, row, br, bg, bb);
@@ -369,16 +363,12 @@ function generateOpenDoor(col, row) {
   const [ar, ag, ab] = PALETTE.doorAccent;
   const [gr, gg, gb] = PALETTE.doorGap;
 
-  // Open space in center (most of the tile)
-  drawRect(col, row, 6, 2, 20, 28, gr, gg, gb);
+  // Open space (right side of tile — passable area)
+  drawRect(col, row, 8, 2, 22, 28, gr, gg, gb);
 
-  // Left panel (retracted to left edge)
-  drawRect(col, row, 2, 2, 4, 28, pr, pg, pb);
-  drawRect(col, row, 3, 4, 1, 24, ar, ag, ab);
-
-  // Right panel (retracted to right edge)
-  drawRect(col, row, 26, 2, 4, 28, pr, pg, pb);
-  drawRect(col, row, 28, 4, 1, 24, ar, ag, ab);
+  // Single panel retracted to left edge
+  drawRect(col, row, 2, 2, 6, 28, pr, pg, pb);
+  drawRect(col, row, 4, 4, 1, 24, ar, ag, ab);
 }
 
 // Tile 17: Space window (frame with stars/celestial elements)

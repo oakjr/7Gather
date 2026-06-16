@@ -196,4 +196,141 @@ describe('ParticipantList', () => {
     const list = screen.getByRole('list', { name: 'Lista de participantes' });
     expect(list).toBeDefined();
   });
+
+  describe('Poke button (Chamar)', () => {
+    it('renders poke button for all participants except current user', () => {
+      const onLocate = vi.fn();
+      const onFollow = vi.fn();
+      const onPoke = vi.fn();
+      render(
+        <ParticipantList
+          participants={mockParticipants}
+          currentUserSessionId="session-1"
+          onLocate={onLocate}
+          onFollow={onFollow}
+          onPoke={onPoke}
+        />
+      );
+
+      // Alice is current user, no poke button for her
+      expect(screen.queryByLabelText('Chamar Alice')).toBeNull();
+      // Other participants should have poke buttons
+      expect(screen.getByLabelText('Chamar Bob')).toBeDefined();
+      expect(screen.getByLabelText('Chamar Charlie')).toBeDefined();
+      expect(screen.getByLabelText('Chamar Diana')).toBeDefined();
+    });
+
+    it('does not render poke buttons when onPoke prop is not provided', () => {
+      const onLocate = vi.fn();
+      const onFollow = vi.fn();
+      render(
+        <ParticipantList
+          participants={mockParticipants}
+          currentUserSessionId="session-1"
+          onLocate={onLocate}
+          onFollow={onFollow}
+        />
+      );
+
+      expect(screen.queryByLabelText('Chamar Bob')).toBeNull();
+      expect(screen.queryByLabelText('Chamar Charlie')).toBeNull();
+    });
+
+    it('calls onPoke with sessionId when poke button is clicked for a connected participant', () => {
+      const onLocate = vi.fn();
+      const onFollow = vi.fn();
+      const onPoke = vi.fn();
+      render(
+        <ParticipantList
+          participants={mockParticipants}
+          currentUserSessionId="session-1"
+          onLocate={onLocate}
+          onFollow={onFollow}
+          onPoke={onPoke}
+        />
+      );
+
+      const pokeBtn = screen.getByLabelText('Chamar Bob');
+      fireEvent.click(pokeBtn);
+
+      expect(onPoke).toHaveBeenCalledTimes(1);
+      expect(onPoke).toHaveBeenCalledWith('session-2');
+    });
+
+    it('shows inline error when poking a disconnected participant', () => {
+      const onLocate = vi.fn();
+      const onFollow = vi.fn();
+      const onPoke = vi.fn();
+      const participantsWithDisconnected: ParticipantInfo[] = [
+        { sessionId: 'session-1', displayName: 'Alice', avatarId: 2, currentZone: '', isConnected: true },
+        { sessionId: 'session-2', displayName: 'Bob', avatarId: 8, currentZone: '', isConnected: false },
+      ];
+      render(
+        <ParticipantList
+          participants={participantsWithDisconnected}
+          currentUserSessionId="session-1"
+          onLocate={onLocate}
+          onFollow={onFollow}
+          onPoke={onPoke}
+        />
+      );
+
+      const pokeBtn = screen.getByLabelText('Chamar Bob');
+      fireEvent.click(pokeBtn);
+
+      expect(onPoke).not.toHaveBeenCalled();
+      expect(screen.getByText('Participante indisponível')).toBeDefined();
+      expect(screen.getByRole('alert')).toBeDefined();
+    });
+
+    it('does not show error when poking a connected participant', () => {
+      const onLocate = vi.fn();
+      const onFollow = vi.fn();
+      const onPoke = vi.fn();
+      const participantsConnected: ParticipantInfo[] = [
+        { sessionId: 'session-1', displayName: 'Alice', avatarId: 2, currentZone: '', isConnected: true },
+        { sessionId: 'session-2', displayName: 'Bob', avatarId: 8, currentZone: '', isConnected: true },
+      ];
+      render(
+        <ParticipantList
+          participants={participantsConnected}
+          currentUserSessionId="session-1"
+          onLocate={onLocate}
+          onFollow={onFollow}
+          onPoke={onPoke}
+        />
+      );
+
+      const pokeBtn = screen.getByLabelText('Chamar Bob');
+      fireEvent.click(pokeBtn);
+
+      expect(onPoke).toHaveBeenCalledWith('session-2');
+      expect(screen.queryByText('Participante indisponível')).toBeNull();
+    });
+
+    it('treats participant without isConnected field as connected', () => {
+      const onLocate = vi.fn();
+      const onFollow = vi.fn();
+      const onPoke = vi.fn();
+      const participantsNoField: ParticipantInfo[] = [
+        { sessionId: 'session-1', displayName: 'Alice', avatarId: 2, currentZone: '' },
+        { sessionId: 'session-2', displayName: 'Bob', avatarId: 8, currentZone: '' },
+      ];
+      render(
+        <ParticipantList
+          participants={participantsNoField}
+          currentUserSessionId="session-1"
+          onLocate={onLocate}
+          onFollow={onFollow}
+          onPoke={onPoke}
+        />
+      );
+
+      const pokeBtn = screen.getByLabelText('Chamar Bob');
+      fireEvent.click(pokeBtn);
+
+      expect(onPoke).toHaveBeenCalledWith('session-2');
+      expect(screen.queryByText('Participante indisponível')).toBeNull();
+    });
+  });
 });

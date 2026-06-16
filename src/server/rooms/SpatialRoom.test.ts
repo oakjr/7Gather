@@ -32,8 +32,14 @@ function createRoom(): SpatialRoom {
   });
   (room as any).broadcast = vi.fn();
   (room as any)._messageHandlers = messageHandlers;
+  (room as any).clients = [];
 
   return room;
+}
+
+// Create a mock client with send function for call tests
+function createMockClientWithSend(sessionId: string) {
+  return { sessionId, send: vi.fn() } as any;
 }
 
 // Helper to invoke a registered message handler
@@ -612,7 +618,7 @@ describe("SpatialRoom", () => {
       });
     });
 
-    describe("lock_room handler (Requirement 14.3, 14.9)", () => {
+    describe("lock_room handler (Requirements 7.2, 14.3, 14.9)", () => {
       let roomWithZones: SpatialRoom;
 
       beforeEach(() => {
@@ -685,7 +691,7 @@ describe("SpatialRoom", () => {
       });
     });
 
-    describe("unlock_room handler (Requirement 14.4, 14.9)", () => {
+    describe("unlock_room handler (Requirements 7.2, 14.4, 14.9)", () => {
       let roomWithZones: SpatialRoom;
 
       beforeEach(() => {
@@ -856,7 +862,7 @@ describe("SpatialRoom", () => {
       });
     });
 
-    describe("move handler - locked zone rejection (Requirements 14.5, 14.7)", () => {
+    describe("move handler - locked zone rejection (Requirements 7.7, 7.8, 14.5, 14.7)", () => {
       let roomWithZones: SpatialRoom;
 
       beforeEach(() => {
@@ -941,6 +947,128 @@ describe("SpatialRoom", () => {
         const player = (roomWithZones as any).state.players.get("visitor");
         expect(player.x).toBe(3);
         expect(player.y).toBe(3);
+      });
+
+      it("should reject non-owner move at zone boundary edge (Requirement 7.7)", () => {
+        // Zone is at tiles (2,2) to (6,6) — test exact boundary at (2,2)
+        const client = { sessionId: "visitor", send: vi.fn() } as any;
+        sendMessage(roomWithZones, "move", client, { x: 2, y: 2, direction: "down", timestamp: Date.now() });
+
+        const player = (roomWithZones as any).state.players.get("visitor");
+        expect(player.x).toBe(0); // unchanged
+        expect(player.y).toBe(0); // unchanged
+        expect(client.send).toHaveBeenCalledWith("room_locked", { zoneId: "sala-1" });
+      });
+
+      it("should reject non-owner move at zone far edge (Requirement 7.7)", () => {
+        // Zone is at tiles (2,2) to (6,6) — test last tile inside zone at (6,6)
+        const client = { sessionId: "visitor", send: vi.fn() } as any;
+        sendMessage(roomWithZones, "move", client, { x: 6, y: 6, direction: "left", timestamp: Date.now() });
+
+        const player = (roomWithZones as any).state.players.get("visitor");
+        expect(player.x).toBe(0); // unchanged
+        expect(player.y).toBe(0); // unchanged
+        expect(client.send).toHaveBeenCalledWith("room_locked", { zoneId: "sala-1" });
+      });
+
+      it("should allow non-owner to move to tile just outside zone boundary", () => {
+        // Zone spans tiles (2,2) to (6,6) — tile (7,3) is just outside
+        const client = createMockClient("visitor");
+        sendMessage(roomWithZones, "move", client, { x: 7, y: 3, direction: "right", timestamp: Date.now() });
+
+        const player = (roomWithZones as any).state.players.get("visitor");
+        expect(player.x).toBe(7);
+        expect(player.y).toBe(3);
+      });
+
+      it("should allow owner to move to multiple positions within locked zone (Requirement 7.8)", () => {
+        const client = createMockClient("owner1");
+        // Move to several positions inside the zone
+        sendMessage(roomWithZones, "move", client, { x: 2, y: 2, direction: "up", timestamp: Date.now() });
+        sendMessage(roomWithZones, "move", client, { x: 5, y: 5, direction: "down", timestamp: Date.now() });
+        sendMessage(roomWithZones, "move", client, { x: 6, y: 6, direction: "left", timestamp: Date.now() });
+
+        const player = (roomWithZones as any).state.players.get("owner1");
+        expect(player.x).toBe(6);
+        expect(player.y).toBe(6);
+      });
+    });
+
+    describe("lock/unlock from unknown session (Requirement 7.2)", () => {
+      let roomWithZones: SpatialRoom;
+
+      beforeEach(() => {
+        roomWithZones = createRoom();
+        roomWithZones.onCreate({
+          mapData: {
+            width: 50,
+            height: 40,
+            tilewidth: 32,
+            tileheight: 32,
+            layers: [
+              {
+                name: "Objects",
+                type: "objectgroup",
+                objects: [
+                  {
+                    id: 1,
+                    name: "sala-1",
+                    type: "zone",
+                    x: 64,
+                    y: 64,
+                    width: 160,
+                    height: 160,
+                    properties: [{ name: "jitsiRoom", type: "string", value: "sala-1" }],
+                  },
+                ],
+              },
+            ],
+            tilesets: [],
+          },
+        });
+        roomWithZones.onJoin(createMockClient("owner1"), { avatarId: 1, displayName: "Owner" });
+        sendMessage(roomWithZones, "claim_room", createMockClient("owner1"), { zoneId: "sala-1" });
+      });
+
+      it("should discard lock_room from session that never joined (Requirement 7.2)", () => {
+        const unknownClient = createMockClient("hacker");
+        sendMessage(roomWithZones, "lock_room", unknownClient, { zoneId: "sala-1" });
+
+        const zoneState = (roomWithZones as any).state.zones.get("sala-1");
+        expect(zoneState.isLocked).toBe(false);
+      });
+
+      it("should discard unlock_room from session that never joined (Requirement 7.2)", () => {
+        // First lock with owner
+        sendMessage(roomWithZones, "lock_room", createMockClient("owner1"), { zoneId: "sala-1" });
+
+        const unknownClient = createMockClient("hacker");
+        sendMessage(roomWithZones, "unlock_room", unknownClient, { zoneId: "sala-1" });
+
+        const zoneState = (roomWithZones as any).state.zones.get("sala-1");
+        expect(zoneState.isLocked).toBe(true); // still locked
+      });
+
+      it("should not send error response when discarding non-owner lock attempt (Requirement 7.2)", () => {
+        roomWithZones.onJoin(createMockClient("other"), { avatarId: 2, displayName: "Other" });
+        const client = { sessionId: "other", send: vi.fn() } as any;
+        sendMessage(roomWithZones, "lock_room", client, { zoneId: "sala-1" });
+
+        // No error message sent - discarded silently
+        expect(client.send).not.toHaveBeenCalled();
+      });
+
+      it("should not send error response when discarding non-owner unlock attempt (Requirement 7.2)", () => {
+        sendMessage(roomWithZones, "lock_room", createMockClient("owner1"), { zoneId: "sala-1" });
+
+        roomWithZones.onJoin(createMockClient("other"), { avatarId: 2, displayName: "Other" });
+        const client = { sessionId: "other", send: vi.fn() } as any;
+        sendMessage(roomWithZones, "unlock_room", client, { zoneId: "sala-1" });
+
+        // No error message sent - discarded silently
+        expect(client.send).not.toHaveBeenCalled();
+        const zoneState = (roomWithZones as any).state.zones.get("sala-1");
+        expect(zoneState.isLocked).toBe(true);
       });
     });
 
@@ -1052,6 +1180,89 @@ describe("SpatialRoom", () => {
       });
     });
 
+    describe("set_status handler (Requirement 4.4)", () => {
+      it("should update player status to 'busy'", () => {
+        const client = createMockClient("player1");
+        sendMessage(room, "set_status", client, { status: "busy" });
+
+        const player = (room as any).state.players.get("player1");
+        expect(player.status).toBe("busy");
+      });
+
+      it("should update player status to 'dnd'", () => {
+        const client = createMockClient("player1");
+        sendMessage(room, "set_status", client, { status: "dnd" });
+
+        const player = (room as any).state.players.get("player1");
+        expect(player.status).toBe("dnd");
+      });
+
+      it("should update player status to 'available'", () => {
+        const client = createMockClient("player1");
+        // First set to busy, then back to available
+        sendMessage(room, "set_status", client, { status: "busy" });
+        sendMessage(room, "set_status", client, { status: "available" });
+
+        const player = (room as any).state.players.get("player1");
+        expect(player.status).toBe("available");
+      });
+
+      it("should silently ignore invalid status value", () => {
+        const client = createMockClient("player1");
+        sendMessage(room, "set_status", client, { status: "invisible" });
+
+        const player = (room as any).state.players.get("player1");
+        expect(player.status).toBe("available"); // unchanged from default
+      });
+
+      it("should silently ignore empty string status", () => {
+        const client = createMockClient("player1");
+        sendMessage(room, "set_status", client, { status: "" });
+
+        const player = (room as any).state.players.get("player1");
+        expect(player.status).toBe("available"); // unchanged
+      });
+
+      it("should silently ignore non-string status", () => {
+        const client = createMockClient("player1");
+        sendMessage(room, "set_status", client, { status: 123 });
+
+        const player = (room as any).state.players.get("player1");
+        expect(player.status).toBe("available"); // unchanged
+      });
+
+      it("should silently ignore null data", () => {
+        const client = createMockClient("player1");
+        sendMessage(room, "set_status", client, null);
+
+        const player = (room as any).state.players.get("player1");
+        expect(player.status).toBe("available"); // unchanged
+      });
+
+      it("should silently ignore undefined data", () => {
+        const client = createMockClient("player1");
+        sendMessage(room, "set_status", client, undefined);
+
+        const player = (room as any).state.players.get("player1");
+        expect(player.status).toBe("available"); // unchanged
+      });
+
+      it("should ignore set_status from unknown client", () => {
+        const unknownClient = createMockClient("unknown");
+        sendMessage(room, "set_status", unknownClient, { status: "busy" });
+        // No error thrown, no state change
+        expect((room as any).state.players.has("unknown")).toBe(false);
+      });
+
+      it("should track activity on set_status message", () => {
+        vi.spyOn(room.reconnectionManager, "trackActivity");
+        const client = createMockClient("player1");
+        sendMessage(room, "set_status", client, { status: "busy" });
+
+        expect(room.reconnectionManager.trackActivity).toHaveBeenCalledWith("player1");
+      });
+    });
+
     describe("Owner disconnect unlock (Requirement 14.10)", () => {
       let roomWithZones: SpatialRoom;
 
@@ -1116,6 +1327,315 @@ describe("SpatialRoom", () => {
 
         const zoneState = (roomWithZones as any).state.zones.get("sala-1");
         expect(zoneState.isLocked).toBe(false);
+      });
+    });
+
+    describe("release_room handler (Requirements 8.1, 8.2, 8.3, 8.4, 8.6)", () => {
+      let roomWithZones: SpatialRoom;
+
+      beforeEach(() => {
+        roomWithZones = createRoom();
+        roomWithZones.onCreate({
+          mapData: {
+            width: 50,
+            height: 40,
+            tilewidth: 32,
+            tileheight: 32,
+            layers: [
+              {
+                name: "Objects",
+                type: "objectgroup",
+                objects: [
+                  {
+                    id: 1,
+                    name: "sala-1",
+                    type: "zone",
+                    x: 64,
+                    y: 64,
+                    width: 160,
+                    height: 160,
+                    properties: [{ name: "jitsiRoom", type: "string", value: "sala-1" }],
+                  },
+                ],
+              },
+            ],
+            tilesets: [],
+          },
+        });
+        roomWithZones.onJoin(createMockClient("owner1"), { avatarId: 1, displayName: "Owner" });
+        sendMessage(roomWithZones, "claim_room", createMockClient("owner1"), { zoneId: "sala-1" });
+        // Lock the room and set a floor color to verify they get cleared on release
+        sendMessage(roomWithZones, "lock_room", createMockClient("owner1"), { zoneId: "sala-1" });
+        sendMessage(roomWithZones, "set_floor_color", createMockClient("owner1"), { zoneId: "sala-1", colorIndex: 7 });
+      });
+
+      it("should clear ownerSessionId on release_room from owner", () => {
+        const client = createMockClient("owner1");
+        sendMessage(roomWithZones, "release_room", client, { zoneId: "sala-1" });
+
+        const zoneState = (roomWithZones as any).state.zones.get("sala-1");
+        expect(zoneState.ownerSessionId).toBe("");
+      });
+
+      it("should set isLocked to false on release_room from owner", () => {
+        const client = createMockClient("owner1");
+        sendMessage(roomWithZones, "release_room", client, { zoneId: "sala-1" });
+
+        const zoneState = (roomWithZones as any).state.zones.get("sala-1");
+        expect(zoneState.isLocked).toBe(false);
+      });
+
+      it("should set floorColorIndex to -1 on release_room from owner", () => {
+        const client = createMockClient("owner1");
+        sendMessage(roomWithZones, "release_room", client, { zoneId: "sala-1" });
+
+        const zoneState = (roomWithZones as any).state.zones.get("sala-1");
+        expect(zoneState.floorColorIndex).toBe(-1);
+      });
+
+      it("should reset all three properties atomically in a single handler call", () => {
+        const client = createMockClient("owner1");
+
+        // Verify pre-conditions
+        const zoneBefore = (roomWithZones as any).state.zones.get("sala-1");
+        expect(zoneBefore.ownerSessionId).toBe("owner1");
+        expect(zoneBefore.isLocked).toBe(true);
+        expect(zoneBefore.floorColorIndex).toBe(7);
+
+        sendMessage(roomWithZones, "release_room", client, { zoneId: "sala-1" });
+
+        // All three should be reset together
+        const zoneAfter = (roomWithZones as any).state.zones.get("sala-1");
+        expect(zoneAfter.ownerSessionId).toBe("");
+        expect(zoneAfter.isLocked).toBe(false);
+        expect(zoneAfter.floorColorIndex).toBe(-1);
+      });
+
+      it("should silently reject release_room from non-owner", () => {
+        roomWithZones.onJoin(createMockClient("intruder"), { avatarId: 2, displayName: "Intruder" });
+        const client = createMockClient("intruder");
+        sendMessage(roomWithZones, "release_room", client, { zoneId: "sala-1" });
+
+        // Zone state should remain unchanged
+        const zoneState = (roomWithZones as any).state.zones.get("sala-1");
+        expect(zoneState.ownerSessionId).toBe("owner1");
+        expect(zoneState.isLocked).toBe(true);
+        expect(zoneState.floorColorIndex).toBe(7);
+      });
+
+      it("should silently reject release_room for nonexistent zone", () => {
+        const client = createMockClient("owner1");
+        sendMessage(roomWithZones, "release_room", client, { zoneId: "nonexistent" });
+        // No error thrown, existing zone state unchanged
+        const zoneState = (roomWithZones as any).state.zones.get("sala-1");
+        expect(zoneState.ownerSessionId).toBe("owner1");
+      });
+
+      it("should silently reject release_room with empty zoneId", () => {
+        const client = createMockClient("owner1");
+        sendMessage(roomWithZones, "release_room", client, { zoneId: "" });
+        // No error thrown
+        const zoneState = (roomWithZones as any).state.zones.get("sala-1");
+        expect(zoneState.ownerSessionId).toBe("owner1");
+      });
+
+      it("should silently reject release_room with non-string zoneId", () => {
+        const client = createMockClient("owner1");
+        sendMessage(roomWithZones, "release_room", client, { zoneId: 123 });
+        // No error thrown
+        const zoneState = (roomWithZones as any).state.zones.get("sala-1");
+        expect(zoneState.ownerSessionId).toBe("owner1");
+      });
+
+      it("should track activity on release_room message", () => {
+        vi.spyOn(roomWithZones.reconnectionManager, "trackActivity");
+        const client = createMockClient("owner1");
+        sendMessage(roomWithZones, "release_room", client, { zoneId: "sala-1" });
+
+        expect(roomWithZones.reconnectionManager.trackActivity).toHaveBeenCalledWith("owner1");
+      });
+    });
+
+    describe("call_participant handler (Requirements 3.2, 3.3, 3.8)", () => {
+      let callRoom: SpatialRoom;
+      let callerClient: any;
+      let targetClient: any;
+
+      beforeEach(() => {
+        callRoom = createRoom();
+        callRoom.onCreate({});
+
+        // Create clients with send mocks
+        callerClient = createMockClientWithSend("caller1");
+        targetClient = createMockClientWithSend("target1");
+
+        // Register clients in the room's clients array
+        (callRoom as any).clients = [callerClient, targetClient];
+
+        // Join both players
+        callRoom.onJoin(callerClient, { avatarId: 1, displayName: "Alice" });
+        callRoom.onJoin(targetClient, { avatarId: 2, displayName: "Bob" });
+      });
+
+      it("should send call_notification to target with caller info", () => {
+        sendMessage(callRoom, "call_participant", callerClient, { targetSessionId: "target1" });
+
+        expect(targetClient.send).toHaveBeenCalledWith(
+          "call_notification",
+          expect.objectContaining({
+            callerSessionId: "caller1",
+            callerName: "Alice",
+            timestamp: expect.any(Number),
+          })
+        );
+      });
+
+      it("should not send notification when target does not exist in state", () => {
+        sendMessage(callRoom, "call_participant", callerClient, { targetSessionId: "nonexistent" });
+
+        expect(targetClient.send).not.toHaveBeenCalled();
+      });
+
+      it("should not send notification when target client is not connected", () => {
+        // Remove target from clients array (disconnected)
+        (callRoom as any).clients = [callerClient];
+
+        sendMessage(callRoom, "call_participant", callerClient, { targetSessionId: "target1" });
+
+        expect(targetClient.send).not.toHaveBeenCalled();
+      });
+
+      it("should not send notification when caller is not in state", () => {
+        const unknownClient = createMockClientWithSend("unknown");
+        (callRoom as any).clients.push(unknownClient);
+
+        sendMessage(callRoom, "call_participant", unknownClient, { targetSessionId: "target1" });
+
+        expect(targetClient.send).not.toHaveBeenCalled();
+      });
+
+      it("should ignore call with invalid targetSessionId (non-string)", () => {
+        sendMessage(callRoom, "call_participant", callerClient, { targetSessionId: 123 });
+
+        expect(targetClient.send).not.toHaveBeenCalled();
+      });
+
+      it("should ignore call with null data", () => {
+        sendMessage(callRoom, "call_participant", callerClient, null);
+
+        expect(targetClient.send).not.toHaveBeenCalled();
+      });
+
+      it("should ignore call with undefined data", () => {
+        sendMessage(callRoom, "call_participant", callerClient, undefined);
+
+        expect(targetClient.send).not.toHaveBeenCalled();
+      });
+
+      it("should track activity on call_participant message", () => {
+        vi.spyOn(callRoom.reconnectionManager, "trackActivity");
+        sendMessage(callRoom, "call_participant", callerClient, { targetSessionId: "target1" });
+
+        expect(callRoom.reconnectionManager.trackActivity).toHaveBeenCalledWith("caller1");
+      });
+
+      it("should track active call for caller → target mapping", () => {
+        sendMessage(callRoom, "call_participant", callerClient, { targetSessionId: "target1" });
+
+        expect((callRoom as any).activeCalls.get("caller1")).toBe("target1");
+      });
+
+      it("should overwrite previous active call when caller calls a new target", () => {
+        const target2Client = createMockClientWithSend("target2");
+        (callRoom as any).clients.push(target2Client);
+        callRoom.onJoin(target2Client, { avatarId: 3, displayName: "Charlie" });
+
+        sendMessage(callRoom, "call_participant", callerClient, { targetSessionId: "target1" });
+        sendMessage(callRoom, "call_participant", callerClient, { targetSessionId: "target2" });
+
+        expect((callRoom as any).activeCalls.get("caller1")).toBe("target2");
+      });
+    });
+
+    describe("call_expired on leave (Requirement 3.8)", () => {
+      let callRoom: SpatialRoom;
+      let callerClient: any;
+      let targetClient: any;
+
+      beforeEach(() => {
+        callRoom = createRoom();
+        callRoom.onCreate({});
+
+        callerClient = createMockClientWithSend("caller1");
+        targetClient = createMockClientWithSend("target1");
+
+        (callRoom as any).clients = [callerClient, targetClient];
+
+        callRoom.onJoin(callerClient, { avatarId: 1, displayName: "Alice" });
+        callRoom.onJoin(targetClient, { avatarId: 2, displayName: "Bob" });
+
+        // Set up an active call
+        sendMessage(callRoom, "call_participant", callerClient, { targetSessionId: "target1" });
+        // Reset send mock to isolate call_expired assertions
+        targetClient.send.mockClear();
+      });
+
+      it("should send call_expired to target when caller leaves (consented)", async () => {
+        await callRoom.onLeave(callerClient, true);
+
+        expect(targetClient.send).toHaveBeenCalledWith(
+          "call_expired",
+          { callerSessionId: "caller1" }
+        );
+      });
+
+      it("should send call_expired to target when caller disconnects and times out", async () => {
+        (callRoom as any).allowReconnection.mockRejectedValue(new Error("timeout"));
+
+        await callRoom.onLeave(callerClient, false);
+
+        expect(targetClient.send).toHaveBeenCalledWith(
+          "call_expired",
+          { callerSessionId: "caller1" }
+        );
+      });
+
+      it("should not send call_expired when caller reconnects successfully", async () => {
+        (callRoom as any).allowReconnection.mockResolvedValue(callerClient);
+
+        await callRoom.onLeave(callerClient, false);
+
+        expect(targetClient.send).not.toHaveBeenCalledWith(
+          "call_expired",
+          expect.anything()
+        );
+      });
+
+      it("should not send call_expired when leaving client has no active call", async () => {
+        // Target leaves (target has no outgoing call)
+        await callRoom.onLeave(targetClient, true);
+
+        // callerClient should not receive call_expired
+        expect(callerClient.send).not.toHaveBeenCalledWith(
+          "call_expired",
+          expect.anything()
+        );
+      });
+
+      it("should remove call from activeCalls after sending call_expired", async () => {
+        await callRoom.onLeave(callerClient, true);
+
+        expect((callRoom as any).activeCalls.has("caller1")).toBe(false);
+      });
+
+      it("should not send call_expired if target is already disconnected", async () => {
+        // Remove target from clients array
+        (callRoom as any).clients = [callerClient];
+
+        await callRoom.onLeave(callerClient, true);
+
+        // No error thrown, call is cleaned up
+        expect((callRoom as any).activeCalls.has("caller1")).toBe(false);
       });
     });
   });

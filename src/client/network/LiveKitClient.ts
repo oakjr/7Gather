@@ -112,6 +112,13 @@ export class LiveKitClient {
         participant: RemoteParticipant
       ) => void)
     | null = null;
+  private trackUnsubscribedCallback:
+    | ((
+        track: RemoteTrack,
+        publication: RemoteTrackPublication,
+        participant: RemoteParticipant
+      ) => void)
+    | null = null;
   private connectionStateCallback:
     | ((state: LiveKitConnectionState) => void)
     | null = null;
@@ -666,6 +673,19 @@ export class LiveKitClient {
   }
 
   /**
+   * Registers a callback for when a remote track is unsubscribed.
+   */
+  onTrackUnsubscribed(
+    callback: (
+      track: RemoteTrack,
+      publication: RemoteTrackPublication,
+      participant: RemoteParticipant
+    ) => void
+  ): void {
+    this.trackUnsubscribedCallback = callback;
+  }
+
+  /**
    * Registers a callback for connection state changes.
    */
   onConnectionStateChange(
@@ -689,6 +709,19 @@ export class LiveKitClient {
       ) => {
         if (this.trackSubscribedCallback) {
           this.trackSubscribedCallback(track, publication, participant);
+        }
+      }
+    );
+
+    this.room.on(
+      RoomEvent.TrackUnsubscribed,
+      (
+        track: RemoteTrack,
+        publication: RemoteTrackPublication,
+        participant: RemoteParticipant
+      ) => {
+        if (this.trackUnsubscribedCallback) {
+          this.trackUnsubscribedCallback(track, publication, participant);
         }
       }
     );

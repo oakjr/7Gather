@@ -97,5 +97,85 @@ describe('PadlockIcon', () => {
 
       expect(onToggle).toHaveBeenCalledTimes(2);
     });
+
+    it('calls onToggle synchronously on click (within single event loop tick)', () => {
+      let callTimestamp = 0;
+      const onToggle = vi.fn(() => {
+        callTimestamp = performance.now();
+      });
+      renderPadlock({ onToggle });
+
+      const before = performance.now();
+      const button = screen.getByRole('button');
+      fireEvent.click(button);
+      const after = performance.now();
+
+      expect(onToggle).toHaveBeenCalledTimes(1);
+      // Verify the toggle was called synchronously (no setTimeout/async delay)
+      expect(callTimestamp).toBeGreaterThanOrEqual(before);
+      expect(callTimestamp).toBeLessThanOrEqual(after);
+    });
+  });
+
+  describe('single render cycle SVG toggle (Requirements 7.3, 7.4)', () => {
+    it('switches from unlocked to locked SVG in a single re-render', () => {
+      const { rerender } = render(
+        <PadlockIcon isLocked={false} onToggle={vi.fn()} hasHomeRoom={true} />
+      );
+
+      // Verify unlocked state
+      let button = screen.getByRole('button');
+      let svg = button.querySelector('svg');
+      let rect = svg?.querySelector('rect');
+      expect(rect?.getAttribute('fill')).toBe('#888888');
+
+      // Re-render with locked prop (simulating single render cycle)
+      rerender(
+        <PadlockIcon isLocked={true} onToggle={vi.fn()} hasHomeRoom={true} />
+      );
+
+      // Verify locked state immediately after re-render
+      button = screen.getByRole('button');
+      svg = button.querySelector('svg');
+      rect = svg?.querySelector('rect');
+      expect(rect?.getAttribute('fill')).toBe('#FF4444');
+    });
+
+    it('switches from locked to unlocked SVG in a single re-render', () => {
+      const { rerender } = render(
+        <PadlockIcon isLocked={true} onToggle={vi.fn()} hasHomeRoom={true} />
+      );
+
+      // Verify locked state
+      let button = screen.getByRole('button');
+      let rect = button.querySelector('svg rect');
+      expect(rect?.getAttribute('fill')).toBe('#FF4444');
+
+      // Re-render with unlocked prop
+      rerender(
+        <PadlockIcon isLocked={false} onToggle={vi.fn()} hasHomeRoom={true} />
+      );
+
+      // Verify unlocked state immediately
+      button = screen.getByRole('button');
+      rect = button.querySelector('svg rect');
+      expect(rect?.getAttribute('fill')).toBe('#888888');
+    });
+
+    it('renders locked SVG with closed shackle path (d contains "v4")', () => {
+      renderPadlock({ isLocked: true });
+      const button = screen.getByRole('button');
+      const path = button.querySelector('svg path');
+      // Locked shackle ends with "v4" (closed connection to body)
+      expect(path?.getAttribute('d')).toContain('v4');
+    });
+
+    it('renders unlocked SVG with open shackle path (no "v4")', () => {
+      renderPadlock({ isLocked: false });
+      const button = screen.getByRole('button');
+      const path = button.querySelector('svg path');
+      // Unlocked shackle does not end with "v4" (open, not connected to body)
+      expect(path?.getAttribute('d')).not.toContain('v4');
+    });
   });
 });

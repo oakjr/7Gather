@@ -14,6 +14,7 @@ export class PlayerSchema extends Schema {
   @type("boolean") isMoving: boolean = false;
   @type("boolean") isMuted: boolean = false;
   @type("string") currentZone: string = "";
+  @type("string") status: string = "available"; // "available" | "busy" | "dnd"
 }
 
 /**

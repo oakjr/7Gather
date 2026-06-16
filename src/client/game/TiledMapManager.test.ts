@@ -624,7 +624,7 @@ describe('TiledMapManager.getObjectsTileLayer', () => {
 // --- Floor Tint Tests ---
 
 /**
- * Creates a mock TiledMapManager with a physics layer containing zone floor tiles (index 10)
+ * Creates a mock TiledMapManager with a ground layer containing zone floor tiles (index 10)
  * for testing applyFloorTint and clearFloorTint.
  */
 function createMockTiledMapManagerWithFloorTiles(options: {
@@ -634,24 +634,31 @@ function createMockTiledMapManagerWithFloorTiles(options: {
   otherTiles?: Array<{ x: number; y: number; index: number }>;
 }) {
   const { mapWidth = 10, mapHeight = 10, floorTiles = [], otherTiles = [] } = options;
-  const ZONE_FLOOR_TILE_INDEX = 10;
+  // With firstgid=1, zone floor local id 10 => GID 11
+  const ZONE_FLOOR_GID = 11;
 
-  // Build a tile grid for the physics layer mock
+  // Build a tile grid for the ground layer mock
   const tileGrid = new Map<string, { index: number; tint: number }>();
   for (const t of floorTiles) {
-    tileGrid.set(`${t.x},${t.y}`, { index: ZONE_FLOOR_TILE_INDEX, tint: 0xFFFFFF });
+    tileGrid.set(`${t.x},${t.y}`, { index: ZONE_FLOOR_GID, tint: 0xFFFFFF });
   }
   for (const t of otherTiles) {
     tileGrid.set(`${t.x},${t.y}`, { index: t.index, tint: 0xFFFFFF });
   }
 
-  const mockPhysicsLayer = {
+  const mockGroundLayer = {
     getTileAt: vi.fn((tileX: number, tileY: number) => {
       const key = `${tileX},${tileY}`;
       const entry = tileGrid.get(key);
       if (!entry) return null;
       return entry; // Returns the mutable object so tint can be set
     }),
+    setCollisionByProperty: vi.fn(),
+    setCollisionByExclusion: vi.fn(),
+  };
+
+  const mockPhysicsLayer = {
+    getTileAt: vi.fn(() => null),
     setCollisionByProperty: vi.fn(),
     setCollisionByExclusion: vi.fn(),
   };
@@ -663,6 +670,16 @@ function createMockTiledMapManagerWithFloorTiles(options: {
     height: mapHeight,
   };
 
+  // Mock mapJson with firstgid=1 (matching the real tileset)
+  const mockMapJson = {
+    width: mapWidth,
+    height: mapHeight,
+    tilewidth: 32,
+    tileheight: 32,
+    layers: [],
+    tilesets: [{ firstgid: 1, name: 'tileset', tilewidth: 32, tileheight: 32, tilecount: 64, columns: 8, image: 'tileset.png', imagewidth: 256, imageheight: 256 }],
+  };
+
   const mockScene = {
     make: { tilemap: vi.fn() },
     cache: { tilemap: { get: vi.fn() } },
@@ -672,9 +689,11 @@ function createMockTiledMapManagerWithFloorTiles(options: {
 
   // Inject mocked fields
   (manager as unknown as { tilemap: unknown }).tilemap = mockTilemap;
+  (manager as unknown as { groundLayer: unknown }).groundLayer = mockGroundLayer;
   (manager as unknown as { physicsLayer: unknown }).physicsLayer = mockPhysicsLayer;
+  (manager as unknown as { mapJson: unknown }).mapJson = mockMapJson;
 
-  return { manager, mockPhysicsLayer, tileGrid };
+  return { manager, mockGroundLayer, mockPhysicsLayer, tileGrid };
 }
 
 describe('TiledMapManager.applyFloorTint', () => {
@@ -703,12 +722,12 @@ describe('TiledMapManager.applyFloorTint', () => {
     expect(tileGrid.get('3,3')!.tint).toBe(0x2D1B69);
   });
 
-  it('should only tint tiles with index 10, not other tiles', () => {
+  it('should only tint zone floor tiles (GID 11), not other tiles', () => {
     const { manager, tileGrid } = createMockTiledMapManagerWithFloorTiles({
       floorTiles: [{ x: 2, y: 2 }],
       otherTiles: [
-        { x: 3, y: 2, index: 11 }, // zone detection tile
-        { x: 2, y: 3, index: 2 },  // wall tile
+        { x: 3, y: 2, index: 12 }, // zone detection tile (GID 12)
+        { x: 2, y: 3, index: 3 },  // wall tile (GID 3)
       ],
     });
 
@@ -720,7 +739,7 @@ describe('TiledMapManager.applyFloorTint', () => {
 
     manager.applyFloorTint(zone, 0xFF0000);
 
-    // Only the floor tile (index 10) should be tinted
+    // Only the floor tile (GID 11) should be tinted
     expect(tileGrid.get('2,2')!.tint).toBe(0xFF0000);
     // Other tiles should remain untinted
     expect(tileGrid.get('3,2')!.tint).toBe(0xFFFFFF);
@@ -784,6 +803,25 @@ describe('TiledMapManager.applyFloorTint', () => {
     // Apply second tint — should replace
     manager.applyFloorTint(zone, 0x00FF00);
     expect(tileGrid.get('2,2')!.tint).toBe(0x00FF00);
+  });
+
+  it('should only target the Ground layer, not the Physics layer', () => {
+    const { manager, mockGroundLayer, mockPhysicsLayer } = createMockTiledMapManagerWithFloorTiles({
+      floorTiles: [{ x: 2, y: 2 }],
+    });
+
+    const zone: import('./TiledMapManager').PrivateZone = {
+      id: 'test-room',
+      bounds: { x: 64, y: 64, width: 32, height: 32 } as Phaser.Geom.Rectangle,
+      tiles: [],
+    };
+
+    manager.applyFloorTint(zone, 0xFF0000);
+
+    // Ground layer should be queried
+    expect(mockGroundLayer.getTileAt).toHaveBeenCalled();
+    // Physics layer should NOT be queried for floor tint
+    expect(mockPhysicsLayer.getTileAt).not.toHaveBeenCalled();
   });
 });
 
@@ -1143,5 +1181,160 @@ describe('TiledMapManager.setDoorState', () => {
 
     // Should not throw, just log a warning
     expect(() => manager.setDoorState(0, 0, true)).not.toThrow();
+  });
+});
+
+
+describe('TiledMapManager.detectDoorTiles with rotation flags', () => {
+  const FLIPPED_DIAG = 0x20000000;
+
+  /**
+   * Creates a mock TiledMapManager with door tiles that have Tiled flip/rotation bits set.
+   * This simulates east/west doors which have the flipped-diagonal flag applied.
+   */
+  function createMockWithRotatedDoorTiles(options: {
+    doorTiles: Array<{ x: number; y: number; isOpen?: boolean; rotated?: boolean }>;
+  }) {
+    const { doorTiles } = options;
+    const mapWidth = 10;
+    const mapHeight = 10;
+    const closedIndex = 16; // firstgid(1) + tile id(15)
+    const openIndex = 17;   // firstgid(1) + tile id(16)
+
+    // Build ObjectsTiles layer data — rotation flags included in tile.index
+    const objectsTilesData: unknown[][] = [];
+    for (let row = 0; row < mapHeight; row++) {
+      objectsTilesData[row] = [];
+      for (let col = 0; col < mapWidth; col++) {
+        const door = doorTiles.find(d => d.x === col && d.y === row);
+        if (door) {
+          const baseIndex = door.isOpen ? openIndex : closedIndex;
+          // Apply rotation flag if this is an east/west door
+          const tileIndex = door.rotated ? (baseIndex | FLIPPED_DIAG) : baseIndex;
+          objectsTilesData[row][col] = { index: tileIndex, properties: {} };
+        } else {
+          objectsTilesData[row][col] = { index: -1, properties: {} };
+        }
+      }
+    }
+
+    const mockTilemap = {
+      worldToTileX: vi.fn((x: number) => Math.floor(x / 32)),
+      worldToTileY: vi.fn((y: number) => Math.floor(y / 32)),
+      getObjectLayer: vi.fn(() => null),
+      getLayer: vi.fn((name: string) => {
+        if (name === 'ObjectsTiles') {
+          return { height: mapHeight, width: mapWidth, data: objectsTilesData };
+        }
+        return null;
+      }),
+    };
+
+    const mockMapJson = {
+      width: mapWidth,
+      height: mapHeight,
+      tilewidth: 32,
+      tileheight: 32,
+      layers: [],
+      tilesets: [{
+        firstgid: 1,
+        name: 'tileset',
+        tilewidth: 32,
+        tileheight: 32,
+        tilecount: 64,
+        columns: 8,
+        image: 'tileset.png',
+        imagewidth: 256,
+        imageheight: 256,
+        tiles: [
+          { id: 15, properties: [{ name: 'doorState', type: 'string', value: 'closed' }] },
+          { id: 16, properties: [{ name: 'doorState', type: 'string', value: 'open' }] },
+        ],
+      }],
+    };
+
+    const mockScene = {
+      make: { tilemap: vi.fn() },
+      cache: { tilemap: { get: vi.fn() } },
+    } as unknown;
+
+    const manager = new TiledMapManager(mockScene as Phaser.Scene);
+
+    // Inject mocked internal state
+    (manager as unknown as { tilemap: unknown }).tilemap = mockTilemap;
+    (manager as unknown as { objectsTileLayer: unknown }).objectsTileLayer = {};
+    (manager as unknown as { mapJson: unknown }).mapJson = mockMapJson;
+    (manager as unknown as { privateZones: unknown[] }).privateZones = [];
+
+    // Trigger door detection
+    const detectedDoors = (manager as unknown as { detectDoorTiles: () => DoorTile[] }).detectDoorTiles();
+    (manager as unknown as { doorTiles: DoorTile[] }).doorTiles = detectedDoors;
+
+    return { manager, detectedDoors, closedIndex, openIndex };
+  }
+
+  it('should detect closed door tiles with flipped-diagonal rotation flag', () => {
+    const { detectedDoors } = createMockWithRotatedDoorTiles({
+      doorTiles: [
+        { x: 3, y: 2, isOpen: false, rotated: true }, // east/west wall door
+      ],
+    });
+
+    expect(detectedDoors).toHaveLength(1);
+    expect(detectedDoors[0]).toEqual({
+      tileX: 3,
+      tileY: 2,
+      closedIndex: 16,
+      openIndex: 17,
+      isOpen: false,
+    });
+  });
+
+  it('should detect open door tiles with flipped-diagonal rotation flag', () => {
+    const { detectedDoors } = createMockWithRotatedDoorTiles({
+      doorTiles: [
+        { x: 5, y: 4, isOpen: true, rotated: true },
+      ],
+    });
+
+    expect(detectedDoors).toHaveLength(1);
+    expect(detectedDoors[0]).toEqual({
+      tileX: 5,
+      tileY: 4,
+      closedIndex: 16,
+      openIndex: 17,
+      isOpen: true,
+    });
+  });
+
+  it('should detect a mix of rotated and non-rotated door tiles', () => {
+    const { detectedDoors } = createMockWithRotatedDoorTiles({
+      doorTiles: [
+        { x: 1, y: 1, isOpen: false, rotated: false }, // north/south door (no rotation)
+        { x: 5, y: 3, isOpen: false, rotated: true },  // east/west door (rotated)
+        { x: 7, y: 5, isOpen: true, rotated: true },   // east/west door open (rotated)
+        { x: 2, y: 8, isOpen: true, rotated: false },  // north/south door open (no rotation)
+      ],
+    });
+
+    expect(detectedDoors).toHaveLength(4);
+    // All should be detected regardless of rotation flags
+    expect(detectedDoors[0]).toMatchObject({ tileX: 1, tileY: 1, isOpen: false });
+    expect(detectedDoors[1]).toMatchObject({ tileX: 5, tileY: 3, isOpen: false });
+    expect(detectedDoors[2]).toMatchObject({ tileX: 7, tileY: 5, isOpen: true });
+    expect(detectedDoors[3]).toMatchObject({ tileX: 2, tileY: 8, isOpen: true });
+  });
+
+  it('should not confuse rotated door GIDs with other tile types', () => {
+    const { detectedDoors } = createMockWithRotatedDoorTiles({
+      doorTiles: [
+        { x: 4, y: 4, isOpen: false, rotated: true },
+      ],
+    });
+
+    // Only the actual door tile should be detected
+    expect(detectedDoors).toHaveLength(1);
+    expect(detectedDoors[0].tileX).toBe(4);
+    expect(detectedDoors[0].tileY).toBe(4);
   });
 });

@@ -17,6 +17,10 @@ export interface AvatarState {
   isMuted: boolean;
 }
 
+// === User Status ===
+
+export type UserStatus = 'available' | 'busy' | 'dnd';
+
 // === WebSocket Messages (Client → Server) ===
 
 export interface MoveMessage {
@@ -31,9 +35,29 @@ export interface ZoneMessage {
   action: 'enter' | 'leave';
 }
 
+export interface CallParticipantMessage {
+  targetSessionId: string;
+}
+
+export interface SetStatusMessage {
+  status: UserStatus;
+}
+
 export interface MusicMessage {
   source: string;       // URL or file name
   format: 'mp3' | 'ogg' | 'wav';
+}
+
+// === WebSocket Messages (Server → Client) ===
+
+export interface CallNotificationMessage {
+  callerSessionId: string;
+  callerName: string;
+  timestamp: number;
+}
+
+export interface CallExpiredMessage {
+  callerSessionId: string;
 }
 
 // === Tiled Map Types ===

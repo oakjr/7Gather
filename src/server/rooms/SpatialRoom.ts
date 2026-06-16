@@ -2,7 +2,7 @@ import { Room, Client } from "colyseus";
 import { RoomState, PlayerSchema, ZoneStateSchema } from "../state/RoomState";
 import { MAX_AVATARS, SYNC_RATE, RECONNECT_TIMEOUT_MS, FLOOR_COLOR_COUNT } from "../../shared/constants";
 import { ReconnectionManager } from "./ReconnectionManager";
-import type { MoveMessage, ZoneMessage, MusicMessage, TiledJSON } from "../../shared/types";
+import type { MoveMessage, ZoneMessage, MusicMessage, TiledJSON, SetStatusMessage, CallParticipantMessage } from "../../shared/types";
 
 /**
  * Configuration options passed when creating a SpatialRoom.
@@ -51,6 +51,9 @@ export class SpatialRoom extends Room<RoomState> {
 
   /** Timeout handles for owner disconnect unlock logic */
   private ownerDisconnectTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+
+  /** Active calls: maps caller sessionId → target sessionId */
+  private activeCalls: Map<string, string> = new Map();
 
   /**
    * Called when the room is created.
@@ -358,6 +361,52 @@ export class SpatialRoom extends Room<RoomState> {
       this.state.music.startedBy = "";
       this.state.music.isPlaying = false;
     });
+
+    // Handler "set_status": update player status indicator
+    // Requirement 4.4: server updates PlayerSchema.status, delta sync broadcasts to all clients
+    this.onMessage("set_status", (client: Client, data: SetStatusMessage) => {
+      this.reconnectionManager.trackActivity(client.sessionId);
+
+      const player = this.state.players.get(client.sessionId);
+      if (!player) return;
+
+      // Validate status is one of the allowed values
+      if (!data || typeof data.status !== "string") return;
+      if (data.status !== "available" && data.status !== "busy" && data.status !== "dnd") return;
+
+      player.status = data.status;
+    });
+
+    // Handler "call_participant": send call notification to target participant
+    // Requirements: 3.2, 3.3, 3.8
+    this.onMessage("call_participant", (client: Client, data: CallParticipantMessage) => {
+      this.reconnectionManager.trackActivity(client.sessionId);
+
+      if (!data || typeof data.targetSessionId !== "string") return;
+
+      const caller = this.state.players.get(client.sessionId);
+      if (!caller) return;
+
+      const target = this.state.players.get(data.targetSessionId);
+      if (!target) return;
+
+      // Find the target client to send the notification
+      const targetClient = this.clients.find(c => c.sessionId === data.targetSessionId);
+      if (!targetClient) return;
+
+      // Track the active call (caller → target)
+      if (!this.activeCalls) {
+        this.activeCalls = new Map();
+      }
+      this.activeCalls.set(client.sessionId, data.targetSessionId);
+
+      // Send call_notification to target
+      targetClient.send("call_notification", {
+        callerSessionId: client.sessionId,
+        callerName: caller.displayName,
+        timestamp: Date.now(),
+      });
+    });
   }
 
   /**
@@ -443,6 +492,8 @@ export class SpatialRoom extends Room<RoomState> {
       this.reconnectionManager.removeClient(client.sessionId);
       // Unlock any rooms owned by this player immediately on consented leave
       this.unlockOwnedZones(client.sessionId);
+      // Notify call targets that caller has left (Requirement 3.8)
+      this.expireActiveCall(client.sessionId);
       return;
     }
 
@@ -469,6 +520,8 @@ export class SpatialRoom extends Room<RoomState> {
       // Unlock will have already happened via the timer (or unlock now as safety)
       this.unlockOwnedZones(client.sessionId);
       this.cancelOwnerDisconnectTimer(client.sessionId);
+      // Notify call targets that caller has left (Requirement 3.8)
+      this.expireActiveCall(client.sessionId);
     }
   }
 
@@ -526,6 +579,26 @@ export class SpatialRoom extends Room<RoomState> {
   }
 
   /**
+   * Sends call_expired to the target if the caller had an active outgoing call.
+   * Removes the call from the active calls map.
+   * Requirement 3.8: If caller leaves before response, server sends call_expired to target.
+   */
+  private expireActiveCall(callerSessionId: string): void {
+    if (!this.activeCalls) return;
+
+    const targetSessionId = this.activeCalls.get(callerSessionId);
+    if (!targetSessionId) return;
+
+    // Find the target client and send call_expired
+    const targetClient = this.clients.find(c => c.sessionId === targetSessionId);
+    if (targetClient) {
+      targetClient.send("call_expired", { callerSessionId });
+    }
+
+    this.activeCalls.delete(callerSessionId);
+  }
+
+  /**
    * Called when the room is disposed (no more clients and room is being destroyed).
    * Performs cleanup of room resources.
    */
@@ -542,6 +615,11 @@ export class SpatialRoom extends Room<RoomState> {
         clearTimeout(timer);
       }
       this.ownerDisconnectTimers.clear();
+    }
+
+    // Clear active calls
+    if (this.activeCalls) {
+      this.activeCalls.clear();
     }
 
     // Clear reconnection manager state

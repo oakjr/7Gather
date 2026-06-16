@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
-import { Direction } from '../../shared/types';
-import { AVATAR_SPEED, TILE_SIZE } from '../../shared/constants';
+import { Direction, UserStatus } from '../../shared/types';
+import { AVATAR_SPEED, STATUS_COLORS, TILE_SIZE } from '../../shared/constants';
 import { TiledMapManager } from './TiledMapManager';
 
 /**
@@ -12,6 +12,8 @@ export class PlayerAvatar {
   private sprite: Phaser.GameObjects.Sprite;
   private nameLabel: Phaser.GameObjects.Text | null = null;
   private muteIcon: Phaser.GameObjects.Sprite | null = null;
+  private statusIndicator: Phaser.GameObjects.Graphics;
+  private currentStatus: UserStatus = 'available';
   private mapManager: TiledMapManager;
   private _direction: Direction = 'down';
   private _isMoving: boolean = false;
@@ -55,6 +57,12 @@ export class PlayerAvatar {
       this.nameLabel.setOrigin(0.5, 1);
       this.nameLabel.setDepth(11);
     }
+
+    // Status indicator: 8px diameter circle at +8, +8 offset from sprite center
+    this.statusIndicator = scene.add.graphics();
+    this.statusIndicator.setDepth(12);
+    this.setStatus('available');
+    this.updateStatusIndicatorPosition();
   }
 
   // --- Public accessors ---
@@ -104,6 +112,7 @@ export class PlayerAvatar {
     this.sprite.y = tileY * TILE_SIZE + TILE_SIZE / 2;
     this.updateNameLabelPosition();
     this.updateMuteIconPosition();
+    this.updateStatusIndicatorPosition();
   }
 
   /** Adjust name label scale to be zoom-independent */
@@ -161,6 +170,7 @@ export class PlayerAvatar {
     this.playWalkAnimation(direction);
     this.updateMuteIconPosition();
     this.updateNameLabelPosition();
+    this.updateStatusIndicatorPosition();
 
     return true;
   }
@@ -182,6 +192,7 @@ export class PlayerAvatar {
     this.sprite.x = x;
     this.sprite.y = y;
     this.updateMuteIconPosition();
+    this.updateStatusIndicatorPosition();
   }
 
   /**
@@ -191,6 +202,7 @@ export class PlayerAvatar {
     this.sprite.x = tileX * TILE_SIZE + TILE_SIZE / 2;
     this.sprite.y = tileY * TILE_SIZE + TILE_SIZE / 2;
     this.updateMuteIconPosition();
+    this.updateStatusIndicatorPosition();
   }
 
   // --- Animations ---
@@ -273,10 +285,32 @@ export class PlayerAvatar {
       this.muteIcon.destroy();
       this.muteIcon = null;
     }
+    if (this.statusIndicator) {
+      this.statusIndicator.destroy();
+    }
     this.sprite.destroy();
   }
 
+  // --- Status Indicator ---
+
+  /**
+   * Set the user status and update the indicator color.
+   * Defaults to "available" color when status is undefined/null.
+   */
+  setStatus(status: UserStatus | null | undefined): void {
+    const effectiveStatus: UserStatus = status && STATUS_COLORS[status] !== undefined ? status : 'available';
+    this.currentStatus = effectiveStatus;
+    this.statusIndicator.clear();
+    this.statusIndicator.fillStyle(STATUS_COLORS[effectiveStatus], 1);
+    this.statusIndicator.fillCircle(0, 0, 4); // radius = 4 for 8px diameter
+  }
+
   // --- Private helpers ---
+
+  private updateStatusIndicatorPosition(): void {
+    this.statusIndicator.x = this.sprite.x + 8;
+    this.statusIndicator.y = this.sprite.y + 8;
+  }
 
   private updateMuteIconPosition(): void {
     if (this.muteIcon && this.muteIcon.visible) {
@@ -324,6 +358,8 @@ export class RemoteAvatar {
   private sprite: Phaser.GameObjects.Sprite;
   private nameLabel: Phaser.GameObjects.Text | null = null;
   private muteIcon: Phaser.GameObjects.Sprite | null = null;
+  private statusIndicator: Phaser.GameObjects.Graphics;
+  private currentStatus: UserStatus = 'available';
   private _direction: Direction = 'down';
   private _isMoving: boolean = false;
   private _isMuted: boolean = false;
@@ -370,6 +406,12 @@ export class RemoteAvatar {
       this.nameLabel.setOrigin(0.5, 1);
       this.nameLabel.setDepth(11);
     }
+
+    // Status indicator: 8px diameter circle at +8, +8 offset from sprite center
+    this.statusIndicator = scene.add.graphics();
+    this.statusIndicator.setDepth(12);
+    this.setStatus('available');
+    this.updateStatusIndicatorPosition();
   }
 
   // --- Public accessors ---
@@ -434,6 +476,7 @@ export class RemoteAvatar {
     this.targetX = x;
     this.targetY = y;
     this.updateMuteIconPosition();
+    this.updateStatusIndicatorPosition();
   }
 
   /**
@@ -469,6 +512,7 @@ export class RemoteAvatar {
 
     this.updateMuteIconPosition();
     this.updateNameLabelPosition();
+    this.updateStatusIndicatorPosition();
   }
 
   // --- Animations ---
@@ -554,10 +598,32 @@ export class RemoteAvatar {
       this.nameLabel.destroy();
       this.nameLabel = null;
     }
+    if (this.statusIndicator) {
+      this.statusIndicator.destroy();
+    }
     this.sprite.destroy();
   }
 
+  // --- Status Indicator ---
+
+  /**
+   * Set the user status and update the indicator color.
+   * Defaults to "available" color when status is undefined/null.
+   */
+  setStatus(status: UserStatus | null | undefined): void {
+    const effectiveStatus: UserStatus = status && STATUS_COLORS[status] !== undefined ? status : 'available';
+    this.currentStatus = effectiveStatus;
+    this.statusIndicator.clear();
+    this.statusIndicator.fillStyle(STATUS_COLORS[effectiveStatus], 1);
+    this.statusIndicator.fillCircle(0, 0, 4); // radius = 4 for 8px diameter
+  }
+
   // --- Private helpers ---
+
+  private updateStatusIndicatorPosition(): void {
+    this.statusIndicator.x = this.sprite.x + 8;
+    this.statusIndicator.y = this.sprite.y + 8;
+  }
 
   private updateMuteIconPosition(): void {
     if (this.muteIcon && this.muteIcon.visible) {

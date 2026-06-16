@@ -103,6 +103,7 @@ vi.mock('phaser', () => {
             generateTexture: vi.fn().mockReturnThis(),
             setDepth: vi.fn().mockReturnThis(),
             setPosition: vi.fn().mockReturnThis(),
+            clear: vi.fn().mockReturnThis(),
             destroy: vi.fn(),
           })),
         };
@@ -271,6 +272,27 @@ describe('GameScene', () => {
       scene.removeRemotePlayer('session-2');
       expect(scene.getRemotePlayers().size).toBe(2);
       expect(scene.getRemotePlayers().has('session-2')).toBe(false);
+    });
+
+    it('should set remote player status', () => {
+      scene.addRemotePlayer('session-1', 5, 10, 10, 'down');
+      const remoteAvatar = scene.getRemotePlayers().get('session-1')!;
+      const setStatusSpy = vi.spyOn(remoteAvatar, 'setStatus');
+
+      scene.setRemotePlayerStatus('session-1', 'busy');
+      expect(setStatusSpy).toHaveBeenCalledWith('busy');
+    });
+
+    it('should handle setRemotePlayerStatus for non-existent player gracefully', () => {
+      expect(() => scene.setRemotePlayerStatus('non-existent', 'dnd')).not.toThrow();
+    });
+
+    it('should set local player status', () => {
+      const avatar = scene.getAvatar();
+      const setStatusSpy = vi.spyOn(avatar, 'setStatus');
+
+      scene.setLocalPlayerStatus('dnd');
+      expect(setStatusSpy).toHaveBeenCalledWith('dnd');
     });
   });
 
@@ -444,6 +466,44 @@ describe('GameScene', () => {
       expect(addGraphicsSpy).toHaveBeenCalled();
     });
 
+    it('should render lock indicators at depth 6 on door tiles adjacent to zone', () => {
+      const mapManager = scene.getMapManager();
+      const mockZone = {
+        id: 'sala-depth',
+        bounds: { x: 32, y: 32, width: 160, height: 160 },
+        tiles: [],
+      };
+      vi.spyOn(mapManager, 'getPrivateZones').mockReturnValue([mockZone as any]);
+      vi.spyOn(mapManager, 'clearFloorTint').mockImplementation(() => {});
+      vi.spyOn(mapManager, 'applyFloorTint').mockImplementation(() => {});
+      vi.spyOn(mapManager, 'getDoorTiles').mockReturnValue([
+        { tileX: 3, tileY: 0, closedIndex: 16, openIndex: 17, isOpen: false },
+        { tileX: 4, tileY: 0, closedIndex: 16, openIndex: 17, isOpen: false },
+      ]);
+
+      const mockGraphics = {
+        fillStyle: vi.fn().mockReturnThis(),
+        fillCircle: vi.fn().mockReturnThis(),
+        fillRect: vi.fn().mockReturnThis(),
+        lineStyle: vi.fn().mockReturnThis(),
+        lineBetween: vi.fn().mockReturnThis(),
+        strokeRect: vi.fn().mockReturnThis(),
+        generateTexture: vi.fn().mockReturnThis(),
+        setDepth: vi.fn().mockReturnThis(),
+        setPosition: vi.fn().mockReturnThis(),
+        clear: vi.fn().mockReturnThis(),
+        destroy: vi.fn(),
+      };
+      (scene as any).add.graphics = vi.fn(() => mockGraphics);
+
+      const mockRoom = createMockRoom({ 'sala-depth': { isLocked: true, floorColorIndex: -1 } });
+      scene.bindRoomState(mockRoom);
+
+      // Should create graphics for each door tile and set depth to 6
+      expect((scene as any).add.graphics).toHaveBeenCalled();
+      expect(mockGraphics.setDepth).toHaveBeenCalledWith(6);
+    });
+
     it('should remove lock indicators when isLocked changes to false', () => {
       const mapManager = scene.getMapManager();
       const mockZone = {
@@ -538,6 +598,284 @@ describe('GameScene', () => {
 
       const mockRoom = createMockRoom({ 'unknown-zone': { isLocked: true, floorColorIndex: 3 } });
       expect(() => scene.bindRoomState(mockRoom)).not.toThrow();
+    });
+
+    it('should handle triple change from release_room (isLocked, floorColorIndex, ownerSessionId) correctly', () => {
+      const mapManager = scene.getMapManager();
+      const mockZone = {
+        id: 'sala-reset',
+        bounds: { x: 32, y: 32, width: 160, height: 160 },
+        tiles: [],
+      };
+      vi.spyOn(mapManager, 'getPrivateZones').mockReturnValue([mockZone as any]);
+      const applyTintSpy = vi.spyOn(mapManager, 'applyFloorTint').mockImplementation(() => {});
+      const clearTintSpy = vi.spyOn(mapManager, 'clearFloorTint').mockImplementation(() => {});
+      vi.spyOn(mapManager, 'getDoorTiles').mockReturnValue([
+        { tileX: 3, tileY: 0, closedIndex: 16, openIndex: 17, isOpen: false },
+      ]);
+
+      const mockGraphics = {
+        fillStyle: vi.fn().mockReturnThis(),
+        fillCircle: vi.fn().mockReturnThis(),
+        fillRect: vi.fn().mockReturnThis(),
+        lineStyle: vi.fn().mockReturnThis(),
+        lineBetween: vi.fn().mockReturnThis(),
+        strokeRect: vi.fn().mockReturnThis(),
+        generateTexture: vi.fn().mockReturnThis(),
+        setDepth: vi.fn().mockReturnThis(),
+        setPosition: vi.fn().mockReturnThis(),
+        clear: vi.fn().mockReturnThis(),
+        destroy: vi.fn(),
+      };
+      (scene as any).add.graphics = vi.fn(() => mockGraphics);
+
+      const onAddCallbacks: any[] = [];
+      const zones = {
+        onAdd: (cb: any) => { onAddCallbacks.push(cb); },
+        onRemove: vi.fn(),
+      };
+      const room = { state: { zones } };
+      scene.bindRoomState(room);
+
+      // Simulate zone added with locked state and a floor color (as if owner has room configured)
+      const zoneState = {
+        isLocked: true,
+        floorColorIndex: 5,
+        zoneId: 'sala-reset',
+        ownerSessionId: 'owner-session-id',
+        _changeCallbacks: [] as (() => void)[],
+        onChange(cb: () => void) { this._changeCallbacks.push(cb); },
+      };
+      onAddCallbacks[0](zoneState, 'sala-reset');
+
+      // Verify initial state was applied: lock indicator shown, tint applied
+      expect((scene as any).add.graphics).toHaveBeenCalled();
+      expect(applyTintSpy).toHaveBeenCalledWith(mockZone, 0x7C4DFF);
+
+      // Reset spies to track the release_room reaction
+      applyTintSpy.mockClear();
+      clearTintSpy.mockClear();
+      mockGraphics.destroy.mockClear();
+
+      // Simulate release_room: server sets all three properties atomically in one patch
+      zoneState.isLocked = false;
+      zoneState.floorColorIndex = -1;
+      zoneState.ownerSessionId = '';
+
+      // Colyseus fires onChange once for the entire patch
+      for (const cb of zoneState._changeCallbacks) {
+        cb();
+      }
+
+      // Verify: lock indicators removed (graphics.destroy called)
+      expect(mockGraphics.destroy).toHaveBeenCalled();
+
+      // Verify: floor tint cleared
+      expect(clearTintSpy).toHaveBeenCalledWith(mockZone);
+
+      // Verify: no tint was re-applied
+      expect(applyTintSpy).not.toHaveBeenCalled();
+    });
+
+    it('should remove Lock_Indicators and clear floor tint synchronously on release_room onChange', () => {
+      const mapManager = scene.getMapManager();
+      const mockZone = {
+        id: 'sala-sync',
+        bounds: { x: 64, y: 64, width: 128, height: 128 },
+        tiles: [],
+      };
+      vi.spyOn(mapManager, 'getPrivateZones').mockReturnValue([mockZone as any]);
+      vi.spyOn(mapManager, 'applyFloorTint').mockImplementation(() => {});
+      const clearTintSpy = vi.spyOn(mapManager, 'clearFloorTint').mockImplementation(() => {});
+      vi.spyOn(mapManager, 'getDoorTiles').mockReturnValue([
+        { tileX: 4, tileY: 1, closedIndex: 16, openIndex: 17, isOpen: false },
+        { tileX: 5, tileY: 1, closedIndex: 16, openIndex: 17, isOpen: false },
+      ]);
+
+      const mockGraphics = {
+        fillStyle: vi.fn().mockReturnThis(),
+        fillCircle: vi.fn().mockReturnThis(),
+        fillRect: vi.fn().mockReturnThis(),
+        lineStyle: vi.fn().mockReturnThis(),
+        lineBetween: vi.fn().mockReturnThis(),
+        strokeRect: vi.fn().mockReturnThis(),
+        generateTexture: vi.fn().mockReturnThis(),
+        setDepth: vi.fn().mockReturnThis(),
+        setPosition: vi.fn().mockReturnThis(),
+        clear: vi.fn().mockReturnThis(),
+        destroy: vi.fn(),
+      };
+      (scene as any).add.graphics = vi.fn(() => mockGraphics);
+
+      const onAddCallbacks: any[] = [];
+      const zones = {
+        onAdd: (cb: any) => { onAddCallbacks.push(cb); },
+        onRemove: vi.fn(),
+      };
+      const room = { state: { zones } };
+      scene.bindRoomState(room);
+
+      // Start with locked zone
+      const zoneState = {
+        isLocked: true,
+        floorColorIndex: 3,
+        zoneId: 'sala-sync',
+        ownerSessionId: 'owner-1',
+        _changeCallbacks: [] as (() => void)[],
+        onChange(cb: () => void) { this._changeCallbacks.push(cb); },
+      };
+      onAddCallbacks[0](zoneState, 'sala-sync');
+
+      // Track call order to verify both happen in one callback
+      const callOrder: string[] = [];
+      mockGraphics.destroy.mockImplementation(() => { callOrder.push('destroy_indicator'); });
+      clearTintSpy.mockImplementation(() => { callOrder.push('clear_tint'); });
+
+      // Triple change from release_room
+      zoneState.isLocked = false;
+      zoneState.floorColorIndex = -1;
+      zoneState.ownerSessionId = '';
+
+      for (const cb of zoneState._changeCallbacks) {
+        cb();
+      }
+
+      // Both operations should have been called (synchronously within the same callback)
+      expect(callOrder).toContain('destroy_indicator');
+      expect(callOrder).toContain('clear_tint');
+    });
+
+    it('should call DoorAnimationSystem.setZoneLocked(id, false) when release_room unlocks zone', () => {
+      const mapManager = scene.getMapManager();
+      const mockZone = {
+        id: 'sala-door',
+        bounds: { x: 32, y: 32, width: 160, height: 160 },
+        tiles: [],
+      };
+      vi.spyOn(mapManager, 'getPrivateZones').mockReturnValue([mockZone as any]);
+      vi.spyOn(mapManager, 'applyFloorTint').mockImplementation(() => {});
+      vi.spyOn(mapManager, 'clearFloorTint').mockImplementation(() => {});
+      vi.spyOn(mapManager, 'getDoorTiles').mockReturnValue([]);
+
+      // Access door animation system via the scene
+      const doorSystem = (scene as any).doorAnimationSystem;
+      const setZoneLockedSpy = doorSystem
+        ? vi.spyOn(doorSystem, 'setZoneLocked')
+        : null;
+
+      const onAddCallbacks: any[] = [];
+      const zones = {
+        onAdd: (cb: any) => { onAddCallbacks.push(cb); },
+        onRemove: vi.fn(),
+      };
+      const room = { state: { zones } };
+      scene.bindRoomState(room);
+
+      const zoneState = {
+        isLocked: true,
+        floorColorIndex: 2,
+        zoneId: 'sala-door',
+        ownerSessionId: 'owner-1',
+        _changeCallbacks: [] as (() => void)[],
+        onChange(cb: () => void) { this._changeCallbacks.push(cb); },
+      };
+      onAddCallbacks[0](zoneState, 'sala-door');
+
+      if (setZoneLockedSpy) {
+        setZoneLockedSpy.mockClear();
+      }
+
+      // Triple change from release_room
+      zoneState.isLocked = false;
+      zoneState.floorColorIndex = -1;
+      zoneState.ownerSessionId = '';
+
+      for (const cb of zoneState._changeCallbacks) {
+        cb();
+      }
+
+      // DoorAnimationSystem should be told zone is unlocked
+      if (setZoneLockedSpy) {
+        expect(setZoneLockedSpy).toHaveBeenCalledWith('sala-door', false);
+      }
+    });
+
+    it('should apply DoorAnimationSystem.setZoneLocked(id, true) on initial onAdd for pre-locked zone (Req 7.10)', () => {
+      const mapManager = scene.getMapManager();
+      const mockZone = {
+        id: 'sala-initial-lock',
+        bounds: { x: 32, y: 32, width: 160, height: 160 },
+        tiles: [],
+      };
+      vi.spyOn(mapManager, 'getPrivateZones').mockReturnValue([mockZone as any]);
+      vi.spyOn(mapManager, 'applyFloorTint').mockImplementation(() => {});
+      vi.spyOn(mapManager, 'clearFloorTint').mockImplementation(() => {});
+      vi.spyOn(mapManager, 'getDoorTiles').mockReturnValue([
+        { tileX: 3, tileY: 0, closedIndex: 16, openIndex: 17, isOpen: false },
+      ]);
+
+      // Access door animation system via the scene
+      const doorSystem = (scene as any).doorAnimationSystem;
+      const setZoneLockedSpy = doorSystem
+        ? vi.spyOn(doorSystem, 'setZoneLocked')
+        : null;
+
+      // Simulate joining a room where a zone is already locked
+      const mockRoom = createMockRoom({ 'sala-initial-lock': { isLocked: true, floorColorIndex: -1 } });
+      scene.bindRoomState(mockRoom);
+
+      // DoorAnimationSystem.setZoneLocked should have been called synchronously on onAdd
+      if (setZoneLockedSpy) {
+        expect(setZoneLockedSpy).toHaveBeenCalledWith('sala-initial-lock', true);
+      }
+    });
+
+    it('should render Lock_Indicators and apply locked-door collision on initial join for pre-locked zones (Req 7.10)', () => {
+      const mapManager = scene.getMapManager();
+      const mockZone = {
+        id: 'sala-pre-locked',
+        bounds: { x: 32, y: 32, width: 160, height: 160 },
+        tiles: [],
+      };
+      vi.spyOn(mapManager, 'getPrivateZones').mockReturnValue([mockZone as any]);
+      vi.spyOn(mapManager, 'clearFloorTint').mockImplementation(() => {});
+      vi.spyOn(mapManager, 'getDoorTiles').mockReturnValue([
+        { tileX: 3, tileY: 0, closedIndex: 16, openIndex: 17, isOpen: false },
+        { tileX: 4, tileY: 0, closedIndex: 16, openIndex: 17, isOpen: false },
+      ]);
+
+      const mockGraphics = {
+        fillStyle: vi.fn().mockReturnThis(),
+        fillCircle: vi.fn().mockReturnThis(),
+        fillRect: vi.fn().mockReturnThis(),
+        lineStyle: vi.fn().mockReturnThis(),
+        lineBetween: vi.fn().mockReturnThis(),
+        strokeRect: vi.fn().mockReturnThis(),
+        generateTexture: vi.fn().mockReturnThis(),
+        setDepth: vi.fn().mockReturnThis(),
+        setPosition: vi.fn().mockReturnThis(),
+        clear: vi.fn().mockReturnThis(),
+        destroy: vi.fn(),
+      };
+      (scene as any).add.graphics = vi.fn(() => mockGraphics);
+
+      const doorSystem = (scene as any).doorAnimationSystem;
+      const setZoneLockedSpy = doorSystem
+        ? vi.spyOn(doorSystem, 'setZoneLocked')
+        : null;
+
+      // Simulate joining/reconnecting to a room where the zone is already locked
+      const mockRoom = createMockRoom({ 'sala-pre-locked': { isLocked: true, floorColorIndex: -1 } });
+      scene.bindRoomState(mockRoom);
+
+      // Verify Lock_Indicators are rendered at depth 6
+      expect((scene as any).add.graphics).toHaveBeenCalled();
+      expect(mockGraphics.setDepth).toHaveBeenCalledWith(6);
+
+      // Verify DoorAnimationSystem is notified synchronously
+      if (setZoneLockedSpy) {
+        expect(setZoneLockedSpy).toHaveBeenCalledWith('sala-pre-locked', true);
+      }
     });
   });
 });

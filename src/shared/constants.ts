@@ -48,3 +48,28 @@ export const FLOOR_COLORS: readonly string[] = [
 
 /** Total number of predefined floor colors */
 export const FLOOR_COLOR_COUNT = 18;
+
+// === Status Indicator Colors (Phaser hex format) ===
+
+/** Color map for user status indicators on avatars */
+export const STATUS_COLORS: Record<string, number> = {
+  available: 0x4cdf8b,
+  busy: 0xffb347,
+  dnd: 0xff6b6b,
+};
+
+// === Call System ===
+
+/** Time in ms before a call notification auto-dismisses */
+export const CALL_TIMEOUT_MS = 60_000;
+
+/** Maximum number of visible call notifications at once */
+export const MAX_VISIBLE_CALLS = 3;
+
+// === Screen Share ===
+
+/** Width in pixels for the minimized screen share thumbnail */
+export const SCREEN_SHARE_THUMBNAIL_WIDTH = 120;
+
+/** Height in pixels for the minimized screen share thumbnail */
+export const SCREEN_SHARE_THUMBNAIL_HEIGHT = 80;

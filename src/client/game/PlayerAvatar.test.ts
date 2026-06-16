@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { AVATAR_SPEED, TILE_SIZE } from '../../shared/constants';
+import { AVATAR_SPEED, STATUS_COLORS, TILE_SIZE } from '../../shared/constants';
 
 /**
  * Unit tests for PlayerAvatar and RemoteAvatar.
@@ -35,14 +35,23 @@ function createMockSprite(x = 0, y = 0) {
 }
 
 function createMockGraphics() {
-  return {
+  const g: any = {
+    x: 0,
+    y: 0,
+    depth: 0,
     fillStyle: vi.fn().mockReturnThis(),
     fillCircle: vi.fn().mockReturnThis(),
     lineStyle: vi.fn().mockReturnThis(),
     lineBetween: vi.fn().mockReturnThis(),
     generateTexture: vi.fn(),
+    setDepth: vi.fn().mockImplementation(function (this: any, d: number) {
+      this.depth = d;
+      return this;
+    }),
+    clear: vi.fn().mockReturnThis(),
     destroy: vi.fn(),
   };
+  return g;
 }
 
 function createMockScene() {
@@ -299,6 +308,76 @@ describe('PlayerAvatar', () => {
       expect(true).toBe(true);
     });
   });
+
+  describe('setStatus', () => {
+    it('should default to available status on creation', () => {
+      const avatar = new PlayerAvatar(scene, 100, 100, 1, mapManager);
+      // The graphics should have been called with available color
+      const graphics = scene.add.graphics.mock.results[0].value;
+      expect(graphics.fillStyle).toHaveBeenCalledWith(STATUS_COLORS.available, 1);
+      expect(graphics.fillCircle).toHaveBeenCalledWith(0, 0, 4);
+    });
+
+    it('should update indicator color when status changes to busy', () => {
+      const avatar = new PlayerAvatar(scene, 100, 100, 1, mapManager);
+      const graphics = scene.add.graphics.mock.results[0].value;
+
+      avatar.setStatus('busy');
+      expect(graphics.clear).toHaveBeenCalled();
+      expect(graphics.fillStyle).toHaveBeenCalledWith(STATUS_COLORS.busy, 1);
+    });
+
+    it('should update indicator color when status changes to dnd', () => {
+      const avatar = new PlayerAvatar(scene, 100, 100, 1, mapManager);
+      const graphics = scene.add.graphics.mock.results[0].value;
+
+      avatar.setStatus('dnd');
+      expect(graphics.clear).toHaveBeenCalled();
+      expect(graphics.fillStyle).toHaveBeenCalledWith(STATUS_COLORS.dnd, 1);
+    });
+
+    it('should default to available color when status is null', () => {
+      const avatar = new PlayerAvatar(scene, 100, 100, 1, mapManager);
+      const graphics = scene.add.graphics.mock.results[0].value;
+
+      avatar.setStatus(null);
+      expect(graphics.fillStyle).toHaveBeenCalledWith(STATUS_COLORS.available, 1);
+    });
+
+    it('should default to available color when status is undefined', () => {
+      const avatar = new PlayerAvatar(scene, 100, 100, 1, mapManager);
+      const graphics = scene.add.graphics.mock.results[0].value;
+
+      avatar.setStatus(undefined);
+      expect(graphics.fillStyle).toHaveBeenCalledWith(STATUS_COLORS.available, 1);
+    });
+
+    it('should set status indicator depth to 12', () => {
+      const avatar = new PlayerAvatar(scene, 100, 100, 1, mapManager);
+      const graphics = scene.add.graphics.mock.results[0].value;
+
+      expect(graphics.setDepth).toHaveBeenCalledWith(12);
+    });
+
+    it('should position status indicator at +8, +8 from sprite center', () => {
+      const avatar = new PlayerAvatar(scene, 100, 100, 1, mapManager);
+      const graphics = scene.add.graphics.mock.results[0].value;
+
+      expect(graphics.x).toBe(108);
+      expect(graphics.y).toBe(108);
+    });
+
+    it('should update status indicator position after move()', () => {
+      const avatar = new PlayerAvatar(scene, 100, 100, 1, mapManager);
+      const graphics = scene.add.graphics.mock.results[0].value;
+
+      avatar.move('right', 500);
+
+      // Indicator should be at avatar's new position + 8
+      expect(graphics.x).toBe(avatar.x + 8);
+      expect(graphics.y).toBe(avatar.y + 8);
+    });
+  });
 });
 
 describe('RemoteAvatar', () => {
@@ -385,6 +464,21 @@ describe('RemoteAvatar', () => {
       expect(remote.x).toBeGreaterThan(0);
       expect(remote.y).toBeGreaterThan(0);
     });
+
+    it('should update status indicator position every frame during interpolation', () => {
+      const remote = new RemoteAvatar(scene, 50, 50, 1);
+      const graphics = scene.add.graphics.mock.results[0].value;
+
+      // Set a far target to ensure movement
+      remote.setTargetPosition(200, 200, 'right');
+
+      // Update a frame
+      remote.update(16);
+
+      // Status indicator should follow the sprite: sprite position + 8
+      expect(graphics.x).toBe(remote.x + 8);
+      expect(graphics.y).toBe(remote.y + 8);
+    });
   });
 
   describe('setPosition (teleport)', () => {
@@ -428,6 +522,55 @@ describe('RemoteAvatar', () => {
       remote.destroy();
 
       expect(true).toBe(true); // no error thrown
+    });
+  });
+
+  describe('setStatus', () => {
+    it('should default to available status on creation', () => {
+      const remote = new RemoteAvatar(scene, 50, 75, 3);
+      const graphics = scene.add.graphics.mock.results[0].value;
+      expect(graphics.fillStyle).toHaveBeenCalledWith(STATUS_COLORS.available, 1);
+      expect(graphics.fillCircle).toHaveBeenCalledWith(0, 0, 4);
+    });
+
+    it('should update indicator color when status changes', () => {
+      const remote = new RemoteAvatar(scene, 50, 75, 3);
+      const graphics = scene.add.graphics.mock.results[0].value;
+
+      remote.setStatus('dnd');
+      expect(graphics.clear).toHaveBeenCalled();
+      expect(graphics.fillStyle).toHaveBeenCalledWith(STATUS_COLORS.dnd, 1);
+    });
+
+    it('should default to available color when status is null', () => {
+      const remote = new RemoteAvatar(scene, 50, 75, 3);
+      const graphics = scene.add.graphics.mock.results[0].value;
+
+      remote.setStatus(null);
+      expect(graphics.fillStyle).toHaveBeenCalledWith(STATUS_COLORS.available, 1);
+    });
+
+    it('should default to available color when status is undefined', () => {
+      const remote = new RemoteAvatar(scene, 50, 75, 3);
+      const graphics = scene.add.graphics.mock.results[0].value;
+
+      remote.setStatus(undefined);
+      expect(graphics.fillStyle).toHaveBeenCalledWith(STATUS_COLORS.available, 1);
+    });
+
+    it('should set status indicator depth to 12', () => {
+      const remote = new RemoteAvatar(scene, 50, 75, 3);
+      const graphics = scene.add.graphics.mock.results[0].value;
+
+      expect(graphics.setDepth).toHaveBeenCalledWith(12);
+    });
+
+    it('should position status indicator at +8, +8 from sprite center', () => {
+      const remote = new RemoteAvatar(scene, 50, 75, 3);
+      const graphics = scene.add.graphics.mock.results[0].value;
+
+      expect(graphics.x).toBe(58);
+      expect(graphics.y).toBe(83);
     });
   });
 });

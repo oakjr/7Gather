@@ -14,6 +14,7 @@ describe("PlayerSchema", () => {
     expect(player.isMoving).toBe(false);
     expect(player.isMuted).toBe(false);
     expect(player.currentZone).toBe("");
+    expect(player.status).toBe("available");
   });
 
   it("should accept valid property assignments", () => {
@@ -27,6 +28,7 @@ describe("PlayerSchema", () => {
     player.isMoving = true;
     player.isMuted = true;
     player.currentZone = "zone_meeting";
+    player.status = "busy";
 
     expect(player.sessionId).toBe("abc123");
     expect(player.displayName).toBe("Test User");
@@ -37,6 +39,7 @@ describe("PlayerSchema", () => {
     expect(player.isMoving).toBe(true);
     expect(player.isMuted).toBe(true);
     expect(player.currentZone).toBe("zone_meeting");
+    expect(player.status).toBe("busy");
   });
 });
 

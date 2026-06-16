@@ -464,6 +464,11 @@ describe('Map Generator - Meeting Room Chairs (Req 7.1, 7.2)', () => {
 });
 
 describe('Map Generator - Door Tiles (Req 12.3)', () => {
+  // Tiled flipped-diagonal bit for 90° clockwise rotation
+  const FLIPPED_DIAG = 0x20000000;
+  // Mask to strip all Tiled flip/rotation bits (bits 29-31)
+  const GID_MASK = 0x1FFFFFFF;
+
   it('should place door tiles at all 2-tile-wide doorways on ObjectsTiles layer', () => {
     const allZones = [...getPrivateRoomZones()];
     const meetingZone = getMeetingRoomZone();
@@ -476,11 +481,13 @@ describe('Map Generator - Door Tiles (Req 12.3)', () => {
       const doorways = findDoorways(tileX, tileY, tileW, tileH);
 
       // Each doorway tile should have an open door tile on ObjectsTiles (doors are open by default)
+      // Strip rotation bits before comparing GID
       for (const d of doorways) {
         const val = getTile(objectsTilesLayer, d.x, d.y);
+        const baseGid = val & GID_MASK;
         expect(
-          val,
-          `Door tile expected at (${d.x},${d.y}) for ${zone.name}, got value ${val}`
+          baseGid,
+          `Door tile expected at (${d.x},${d.y}) for ${zone.name}, got value ${val} (base GID ${baseGid})`
         ).toBe(VAL_OPEN_DOOR);
         totalDoorTiles++;
       }
@@ -488,6 +495,82 @@ describe('Map Generator - Door Tiles (Req 12.3)', () => {
 
     // Should have door tiles placed (at least 16 private rooms * 2 tiles + meeting room doors)
     expect(totalDoorTiles).toBeGreaterThanOrEqual(16 * 2);
+  });
+
+  it('should apply rotation flag (flipped-diagonal bit) to east/west wall doors', () => {
+    const allZones = [...getPrivateRoomZones()];
+    const meetingZone = getMeetingRoomZone();
+    if (meetingZone) allZones.push(meetingZone);
+
+    for (const zone of allZones) {
+      const { tileX, tileY, tileW, tileH } = zoneToTiles(zone);
+      const doorways = findDoorways(tileX, tileY, tileW, tileH);
+
+      for (const d of doorways) {
+        const val = getTile(objectsTilesLayer, d.x, d.y);
+        const wallLeft = tileX - 1;
+        const wallRight = tileX + tileW;
+
+        // If door is on left or right wall (east/west), it should have rotation bit
+        if (d.x === wallLeft || d.x === wallRight) {
+          expect(
+            (val & FLIPPED_DIAG) !== 0,
+            `East/west door at (${d.x},${d.y}) for ${zone.name} should have rotation flag, got ${val}`
+          ).toBe(true);
+        }
+      }
+    }
+  });
+
+  it('should NOT apply rotation flag to north/south wall doors', () => {
+    const allZones = [...getPrivateRoomZones()];
+    const meetingZone = getMeetingRoomZone();
+    if (meetingZone) allZones.push(meetingZone);
+
+    for (const zone of allZones) {
+      const { tileX, tileY, tileW, tileH } = zoneToTiles(zone);
+      const doorways = findDoorways(tileX, tileY, tileW, tileH);
+
+      for (const d of doorways) {
+        const val = getTile(objectsTilesLayer, d.x, d.y);
+        const wallTop = tileY - 1;
+        const wallBottom = tileY + tileH;
+
+        // If door is on top or bottom wall (north/south), no rotation bit
+        if (d.y === wallTop || d.y === wallBottom) {
+          expect(
+            (val & FLIPPED_DIAG) === 0,
+            `North/south door at (${d.x},${d.y}) for ${zone.name} should NOT have rotation flag, got ${val}`
+          ).toBe(true);
+        }
+      }
+    }
+  });
+
+  it('should place each door tile in its own 32x32 cell with no overlap', () => {
+    const allZones = [...getPrivateRoomZones()];
+    const meetingZone = getMeetingRoomZone();
+    if (meetingZone) allZones.push(meetingZone);
+
+    for (const zone of allZones) {
+      const { tileX, tileY, tileW, tileH } = zoneToTiles(zone);
+      const doorways = findDoorways(tileX, tileY, tileW, tileH);
+
+      // Doorways should always be exactly 2 tiles (pairs)
+      // Each tile occupies a unique grid cell
+      const doorPositions = new Set();
+      for (const d of doorways) {
+        const key = `${d.x},${d.y}`;
+        expect(
+          doorPositions.has(key),
+          `Duplicate door tile at (${d.x},${d.y}) for ${zone.name}`
+        ).toBe(false);
+        doorPositions.add(key);
+      }
+
+      // Verify doorways come in pairs (2-tile wide)
+      expect(doorways.length % 2).toBe(0);
+    }
   });
 });
 

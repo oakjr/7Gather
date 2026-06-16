@@ -329,10 +329,36 @@ for (const [sideName, candidates] of Object.entries(sides)) {
 }
 
 // === DOOR TILES: open doors at every 2-tile-wide doorway on ObjectsTiles layer (open by default) ===
+// Tiled flipped-diagonal bit for 90° clockwise rotation (bit 29)
+const FLIPPED_DIAG = 0x20000000;
+
 const allDoorTiles = [];
 for (const room of rooms) {
   for (const dt of room.doorTiles) {
-    setObjectsTiles(dt.x, dt.y, TILE.OPEN_DOOR);
+    // Determine if this door tile is on an east/west wall (needs rotation)
+    // or on a north/south wall (plain GID, no rotation)
+    let doorGid = gid(TILE.OPEN_DOOR);
+    let isEastWest = false;
+
+    if (room.doorSide === 'east' || room.doorSide === 'west') {
+      // All door tiles in east/west-facing rooms are on east/west walls
+      isEastWest = true;
+    } else if (room.doorSide === 'all') {
+      // Meeting room: determine wall orientation by position
+      // East/west wall doors have x == wl or x == wr
+      if (dt.x === room.wl || dt.x === room.wr) {
+        isEastWest = true;
+      }
+    }
+
+    if (isEastWest) {
+      doorGid = gid(TILE.OPEN_DOOR) | FLIPPED_DIAG;
+    }
+
+    // Place each door tile in its own 32×32 cell (no overlap)
+    if (inBounds(dt.x, dt.y)) {
+      objectsTiles[idx(dt.x, dt.y)] = doorGid;
+    }
     allDoorTiles.push(dt);
   }
 }
@@ -661,8 +687,10 @@ physics.forEach(t => {
 
 let doors = 0, chairs = 0, decoratives = 0;
 objectsTiles.forEach(t => {
-  if (t === gid(TILE.CLOSED_DOOR) || t === gid(TILE.OPEN_DOOR)) doors++;
-  else if (t === gid(TILE.CHAIR)) chairs++;
+  // Strip rotation/flip bits to get base GID for comparison
+  const baseGid = t & 0x1FFFFFFF;
+  if (baseGid === gid(TILE.CLOSED_DOOR) || baseGid === gid(TILE.OPEN_DOOR)) doors++;
+  else if (baseGid === gid(TILE.CHAIR)) chairs++;
   else if (t > 0) decoratives++;
 });
 

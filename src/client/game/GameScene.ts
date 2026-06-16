@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { Direction } from '../../shared/types';
+import { Direction, UserStatus } from '../../shared/types';
 import { TILE_SIZE, FLOOR_COLORS } from '../../shared/constants';
 import { TiledMapManager, PrivateZone } from './TiledMapManager';
 import { PlayerAvatar, RemoteAvatar } from './PlayerAvatar';
@@ -472,6 +472,30 @@ export class GameScene extends Phaser.Scene {
     const remoteAvatar = this.remotePlayers.get(sessionId);
     if (remoteAvatar) {
       remoteAvatar.setMuteIndicator(muted);
+    }
+  }
+
+  /**
+   * Update the status indicator for a remote player.
+   *
+   * @param sessionId - The session ID of the remote player
+   * @param status - The player's status ("available", "busy", "dnd")
+   */
+  setRemotePlayerStatus(sessionId: string, status: string): void {
+    const remoteAvatar = this.remotePlayers.get(sessionId);
+    if (remoteAvatar) {
+      remoteAvatar.setStatus(status as any);
+    }
+  }
+
+  /**
+   * Update the local player's status indicator.
+   *
+   * @param status - The player's status ("available", "busy", "dnd")
+   */
+  setLocalPlayerStatus(status: string): void {
+    if (this.avatar) {
+      this.avatar.setStatus(status as any);
     }
   }
 

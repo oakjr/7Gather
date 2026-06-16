@@ -45,7 +45,7 @@ function createMockDoorTile(tileX: number, tileY: number, isOpen: boolean = fals
   };
 }
 
-function createMockMapManager(doors: DoorTile[]) {
+function createMockMapManager(doors: DoorTile[], privateZones: any[] = []) {
   return {
     getDoorTiles: vi.fn(() => doors),
     setDoorState: vi.fn((tileX: number, tileY: number, open: boolean) => {
@@ -54,6 +54,9 @@ function createMockMapManager(doors: DoorTile[]) {
         door.isOpen = open;
       }
     }),
+    getPrivateZones: vi.fn(() => privateZones),
+    setLockedDoor: vi.fn(),
+    clearLockedDoor: vi.fn(),
   } as any;
 }
 
@@ -287,6 +290,164 @@ describe('DoorAnimationSystem', () => {
 
       expect(mapManager.setDoorState).not.toHaveBeenCalled();
       expect(doors[0].isOpen).toBe(false);
+    });
+  });
+
+  describe('setZoneLocked - locking zones', () => {
+    let zoneDoors: DoorTile[];
+    let zoneMapManager: ReturnType<typeof createMockMapManager>;
+    let zoneSystem: DoorAnimationSystem;
+
+    // Zone at pixel (96, 96) with size (128, 128) → tile (3, 3) with tile size (4, 4)
+    // Door at (3, 2) is on the north edge adjacent to zone
+    const mockZone = {
+      id: 'zone-1',
+      bounds: { x: 96, y: 96, width: 128, height: 128 },
+      tiles: [],
+    };
+
+    beforeEach(() => {
+      zoneDoors = [createMockDoorTile(3, 2, false)]; // door adjacent to zone north edge
+      zoneMapManager = createMockMapManager(zoneDoors, [mockZone]);
+      zoneSystem = new DoorAnimationSystem(zoneMapManager, objectsLayer);
+    });
+
+    it('should call setLockedDoor on door tiles adjacent to the locked zone', () => {
+      zoneSystem.setZoneLocked('zone-1', true);
+
+      expect(zoneMapManager.setLockedDoor).toHaveBeenCalledWith(3, 2);
+    });
+
+    it('should force close an open door when zone is locked', () => {
+      zoneDoors = [createMockDoorTile(3, 2, true)]; // door is open
+      zoneMapManager = createMockMapManager(zoneDoors, [mockZone]);
+      zoneSystem = new DoorAnimationSystem(zoneMapManager, objectsLayer);
+
+      zoneSystem.setZoneLocked('zone-1', true);
+
+      expect(zoneMapManager.setDoorState).toHaveBeenCalledWith(3, 2, false);
+      expect(zoneMapManager.setLockedDoor).toHaveBeenCalledWith(3, 2);
+    });
+
+    it('should not call setDoorState if door is already closed when zone is locked', () => {
+      zoneSystem.setZoneLocked('zone-1', true);
+
+      // Door was already closed, so setDoorState should NOT be called
+      expect(zoneMapManager.setDoorState).not.toHaveBeenCalled();
+      // But setLockedDoor should still be called
+      expect(zoneMapManager.setLockedDoor).toHaveBeenCalledWith(3, 2);
+    });
+
+    it('should ignore proximity triggers for locked doors during update', () => {
+      zoneSystem.setZoneLocked('zone-1', true);
+
+      // Avatar moves right next to the locked door
+      zoneSystem.update(3, 2, new Map());
+
+      // setDoorState should not be called with open=true (proximity ignored)
+      expect(zoneMapManager.setDoorState).not.toHaveBeenCalledWith(3, 2, true);
+    });
+
+    it('should force close a locked door if it somehow gets opened during update', () => {
+      zoneSystem.setZoneLocked('zone-1', true);
+      // Manually set door to open to simulate an edge case
+      zoneDoors[0].isOpen = true;
+
+      zoneSystem.update(3, 2, new Map());
+
+      expect(zoneMapManager.setDoorState).toHaveBeenCalledWith(3, 2, false);
+    });
+
+    it('should not affect doors that are not adjacent to the locked zone', () => {
+      // Add a door far from the zone
+      const farDoor = createMockDoorTile(20, 20, false);
+      zoneDoors = [createMockDoorTile(3, 2, false), farDoor];
+      zoneMapManager = createMockMapManager(zoneDoors, [mockZone]);
+      zoneSystem = new DoorAnimationSystem(zoneMapManager, objectsLayer);
+
+      zoneSystem.setZoneLocked('zone-1', true);
+
+      // Only the adjacent door should get locked
+      expect(zoneMapManager.setLockedDoor).toHaveBeenCalledWith(3, 2);
+      expect(zoneMapManager.setLockedDoor).not.toHaveBeenCalledWith(20, 20);
+    });
+
+    it('should allow non-adjacent doors to still respond to proximity when zone is locked', () => {
+      const farDoor = createMockDoorTile(20, 20, false);
+      zoneDoors = [createMockDoorTile(3, 2, false), farDoor];
+      zoneMapManager = createMockMapManager(zoneDoors, [mockZone]);
+      zoneSystem = new DoorAnimationSystem(zoneMapManager, objectsLayer);
+
+      zoneSystem.setZoneLocked('zone-1', true);
+      zoneMapManager.setDoorState.mockClear();
+
+      // Avatar near the far door
+      zoneSystem.update(20, 20, new Map());
+
+      expect(zoneMapManager.setDoorState).toHaveBeenCalledWith(20, 20, true);
+    });
+  });
+
+  describe('setZoneLocked - unlocking zones', () => {
+    let zoneDoors: DoorTile[];
+    let zoneMapManager: ReturnType<typeof createMockMapManager>;
+    let zoneSystem: DoorAnimationSystem;
+
+    const mockZone = {
+      id: 'zone-1',
+      bounds: { x: 96, y: 96, width: 128, height: 128 },
+      tiles: [],
+    };
+
+    beforeEach(() => {
+      zoneDoors = [createMockDoorTile(3, 2, false)];
+      zoneMapManager = createMockMapManager(zoneDoors, [mockZone]);
+      zoneSystem = new DoorAnimationSystem(zoneMapManager, objectsLayer);
+      // Lock first, then unlock
+      zoneSystem.setZoneLocked('zone-1', true);
+      zoneMapManager.setDoorState.mockClear();
+      zoneMapManager.setLockedDoor.mockClear();
+      zoneMapManager.clearLockedDoor.mockClear();
+    });
+
+    it('should call clearLockedDoor on door tiles when zone is unlocked', () => {
+      zoneSystem.setZoneLocked('zone-1', false);
+
+      expect(zoneMapManager.clearLockedDoor).toHaveBeenCalledWith(3, 2);
+    });
+
+    it('should restore proximity-based open behavior after unlock (Manhattan distance ≤1)', () => {
+      zoneSystem.setZoneLocked('zone-1', false);
+
+      // Avatar adjacent to door → should open
+      zoneSystem.update(3, 1, new Map()); // Manhattan distance = 1
+
+      expect(zoneMapManager.setDoorState).toHaveBeenCalledWith(3, 2, true);
+    });
+
+    it('should restore proximity-based close behavior after unlock (Manhattan distance >2)', () => {
+      zoneSystem.setZoneLocked('zone-1', false);
+
+      // First open the door
+      zoneDoors[0].isOpen = true;
+
+      // Avatar far from door → should close
+      zoneSystem.update(20, 20, new Map());
+
+      expect(zoneMapManager.setDoorState).toHaveBeenCalledWith(3, 2, false);
+    });
+
+    it('should not close door at Manhattan distance exactly 2 after unlock', () => {
+      zoneSystem.setZoneLocked('zone-1', false);
+
+      // Open the door first
+      zoneDoors[0].isOpen = true;
+
+      // Avatar at Manhattan distance 2 from door (3,2) → (3,0) = distance 2
+      zoneSystem.update(3, 0, new Map());
+
+      // Door should stay open (threshold to close is >2)
+      expect(zoneMapManager.setDoorState).not.toHaveBeenCalled();
     });
   });
 });

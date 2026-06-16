@@ -150,6 +150,40 @@ describe('MediaControls', () => {
 
       expect(screen.getByText('Câmera indisponível')).toBeDefined();
     });
+
+    it('applies media-btn--disabled class to mic button when permission is denied', () => {
+      renderControls({ micPermission: 'denied' });
+
+      const micBtn = screen.getByRole('button', { name: /microfone indisponível/i });
+      expect(micBtn.className).toContain('media-btn--disabled');
+      expect(micBtn.className).not.toContain('media-btn--on');
+      expect(micBtn.className).not.toContain('media-btn--off');
+    });
+
+    it('applies media-btn--disabled class to video button when permission is denied', () => {
+      renderControls({ cameraPermission: 'denied' });
+
+      const videoBtn = screen.getByRole('button', { name: /câmera indisponível/i });
+      expect(videoBtn.className).toContain('media-btn--disabled');
+      expect(videoBtn.className).not.toContain('media-btn--on');
+      expect(videoBtn.className).not.toContain('media-btn--off');
+    });
+
+    it('disabled mic button does not use on/off class regardless of isMuted state', () => {
+      renderControls({ micPermission: 'denied', isMuted: true });
+
+      const micBtn = screen.getByRole('button', { name: /microfone indisponível/i });
+      expect(micBtn.className).toContain('media-btn--disabled');
+      expect(micBtn.className).not.toContain('media-btn--off');
+    });
+
+    it('disabled video button does not use on/off class regardless of isVideoOn state', () => {
+      renderControls({ cameraPermission: 'denied', isVideoOn: true });
+
+      const videoBtn = screen.getByRole('button', { name: /câmera indisponível/i });
+      expect(videoBtn.className).toContain('media-btn--disabled');
+      expect(videoBtn.className).not.toContain('media-btn--on');
+    });
   });
 
   describe('permission prompt and granted states', () => {
